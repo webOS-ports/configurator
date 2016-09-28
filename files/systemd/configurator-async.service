@@ -1,0 +1,12 @@
+[Unit]
+Description=webOS service to create necessary database schema for applications
+After=activitymanager.service
+Requires=activitymanager.service
+
+[Service]
+Type=oneshot
+Restart=no
+ExecStart=/usr/bin/luna-send -n 1 palm://com.palm.configurator/run '{"types":["activities"]}'
+
+[Install]
+WantedBy=multi-user.target
