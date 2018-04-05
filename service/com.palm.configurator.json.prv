@@ -1,6 +1,6 @@
 {
     "role": {
-        "exeName":"/usr/bin/configurator",
+        "exeName":"/usr/sbin/configurator",
         "type": "privileged",
         "allowedNames": ["com.palm.configurator"]
     },
