@@ -1,7 +1,7 @@
 [Unit]
 Description=webOS service to create necessary database schema for applications
-After=filecache.service db8@maindb.service db8@mediadb.service db8@tempdb.service
-Requires=filecache.service db8@maindb.service db8@mediadb.service db8@tempdb.service
+After=filecache.service db8-maindb.service db8-mediadb.service db8-tempdb.service
+Requires=filecache.service db8-maindb.service db8-mediadb.service db8-tempdb.service
 
 [Service]
 Type=oneshot
