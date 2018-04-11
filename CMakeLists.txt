@@ -66,3 +66,7 @@ target_link_libraries(configurator
 webos_configure_header_files(src)
 webos_build_daemon(NAME configurator LAUNCH files/launch)
 webos_build_system_bus_files()
+
+# install the script file
+webos_configure_source_files(CONFIG-DB8 files/scripts/configurator-db8.sh)
+install(PROGRAMS ${CONFIG-DB8} DESTINATION ${WEBOS_INSTALL_SBINDIR})
