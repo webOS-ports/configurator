@@ -6,6 +6,7 @@
         "settings",
         "devices",
         "networking.query",
-        "applications.query"
+        "applications.query",
+        "system"
     ]
 }
