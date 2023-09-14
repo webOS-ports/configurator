@@ -20,6 +20,14 @@
         "networking.query",
         "applications.query",
         "tts.internal",
-        "ppm.private"
+        "ppm.private",
+        "application.launcher",
+        "calendarremindersservice.operation",
+        "contactslinkerservice.operation",
+        "contactsservice.operation",
+        "imlibpurple-service.operation",
+        "messaging-service.operation",
+        "telephony.management",
+        "update-service.operation"
     ]
 }
