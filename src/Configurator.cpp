@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 #include <utime.h>
 #include <algorithm>
+#include <glib.h>
 
 using namespace std;
 
@@ -171,6 +172,29 @@ void Configurator::InitCacheDir() const
 	MojMkDir(kConfCacheDir, kCacheStampPerm);
 }
 
+#ifndef EXTENSION_STARFISH
+// What a stamp records: the SHA-256 of a configuration's contents, in hex.
+static std::string ContentChecksum(const std::string& contents)
+{
+    gchar* sum = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+            reinterpret_cast<const guchar*>(contents.data()), contents.size());
+    std::string out(sum ? sum : "");
+    g_free(sum);
+    return out;
+}
+
+// Write the checksum of confFile into an open stamp. A stamp left without one only makes the
+// file configure again next time.
+bool Configurator::WriteStampChecksum(int stampFd, const std::string& confFile) const
+{
+    const std::string sum = ContentChecksum(ReadFile(confFile));
+    if (sum.empty())
+        return false;
+    const ssize_t written = write(stampFd, sum.data(), sum.size());
+    return written >= 0 && static_cast<size_t>(written) == sum.size();
+}
+#endif
+
 bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
 {
         if (!this->CanCacheConfiguratorStatus(confFile)) {
@@ -184,19 +208,25 @@ bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
     bool returnvalue = GenerateandVerifyConfigChecksum(confFile, std::move(stamp));
     return returnvalue;
 #else
+    // A file counts as configured while its contents are what the stamp records. Comparing
+    // mtimes is not enough: a reproducible image gives every file the same mtime, so a file an
+    // update changed never looked newer than its stamp and was skipped for good. A stamp that
+    // records no checksum (one from before this check) matches nothing, so its file is
+    // configured once more.
     std::string stamp("");
-    MojStatT stampInfo, confInfo;
+    MojStatT confInfo;
     if(kConfCacheDir)
         stamp = kConfCacheDir + Replace(confFile, "/", "_");
-
-    if (MojErrNone != MojStat(stamp.c_str(), &stampInfo))
-        return false;
 
     if (MojErrNone != MojStat(confFile.c_str(), &confInfo))
         return false;
 
+    const std::string recorded = ReadFile(stamp);
+    if (recorded.empty())
+        return false;
+
     LOG_DEBUG("%s may already be configured - %s exists", confFile.c_str(), stamp.c_str());
-    return stampInfo.st_mtime >= confInfo.st_mtime;
+    return recorded == ContentChecksum(ReadFile(confFile));
 #endif
 }
 
@@ -238,11 +268,18 @@ void Configurator::MarkConfigured(const std::string &confFile) const
 
     string stamp = kConfCacheDir + Replace(confFile, "/", "_");
 
-    int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_NOATIME, kCacheStampPerm);
+    int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
     if (stampFd == -1) {
         MojLogError(m_log, "Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
         return;
     }
+
+#ifndef EXTENSION_STARFISH
+    if (!WriteStampChecksum(stampFd, confFile))
+        LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+            PMLOGKS("file", confFile.c_str()),
+            "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
+#endif
 
     if (-1 == futimes(stampFd, times)) {
         // fall through to close()
@@ -279,7 +316,7 @@ void Configurator::MarkConfigured(const std::string &confFile) const
     if(kConfCacheDir)
         stamp = kConfCacheDir + Replace(confFile, "/", "_");
 
-        int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_NOATIME, kCacheStampPerm);
+        int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
         if (stampFd == -1) {
             LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
                 PMLOGKS("file", confFile.c_str()),
@@ -287,6 +324,13 @@ void Configurator::MarkConfigured(const std::string &confFile) const
                 "Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
             return;
         }
+
+#ifndef EXTENSION_STARFISH
+        if (!WriteStampChecksum(stampFd, confFile))
+            LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+                PMLOGKS("file", confFile.c_str()),
+                "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
+#endif
 
         if (-1 == futimens(stampFd, times)) {
             // fall through to close()
