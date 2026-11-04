@@ -6,7 +6,47 @@
     "permissions": [
         {
             "service":"com.palm.configurator",
-            "outbound":["com.palm.activitymanager", "com.palm.db", "com.palm.tempdb", "com.webos.mediadb", "com.webos.epgdb"]
+            "outbound":["com.palm.activitymanager", "com.palm.db", "com.palm.filecache", "com.palm.tempdb", "com.webos.mediadb", "com.webos.epgdb", "com.webos.lunasend-*"]
+        },
+        {
+            "service": "com.palm.service.accounts",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "com.palm.service.calendar.reminders",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "com.palm.service.contacts",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "com.palm.service.contacts.linker",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "org.webosports.service.update",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "org.webosports.service.messaging",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "com.palm.imlibpurple",
+            "inbound": ["*"],
+            "outbound": ["*"]
+        },
+        {
+            "service": "*",
+            "inbound": ["*"],
+            "outbound": ["*"]
         }
     ]
 }

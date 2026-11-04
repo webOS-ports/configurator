@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2020 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,25 +19,15 @@
 #include "BusClient.h"
 #include "FileCacheConfigurator.h"
 
-using namespace std;
+#include <string>
+#include <string_view>
 
-const char* const FileCacheConfigurator::FILECACHE_BUS_ADDRESS		 = "com.palm.filecache";
-const char* const FileCacheConfigurator::FILECACHE_DEFINETYPE_METHOD = "DefineType";
-const char* const FileCacheConfigurator::FILECACHE_DELETETYPE_METHOD = "DeleteType";
-const char* const FileCacheConfigurator::FILECACHE_TYPENAME_KEY = "typeName";
-
-static bool endsWith(const std::string& str, const std::string &suffix)
-{
-    return str.length() >= suffix.length() && string::npos != str.rfind(suffix, str.length() - suffix.length());
-}
+namespace {
 
 class FileCacheConfiguratorResponse : public ConfiguratorCallback {
-	// copied from FileCacheError.h - unfortunately this is brittle,
-	// but i'm only using it to cache NAK response for DefineType & I'm doing
-	// a string comparison too to make sure the failure reason was what I expected,
-	// so I believe this should be enough to keep configurator safe when FileCache changes
-	// (only bad behaviour should be sub-optimal performance in that the configurator will try
-	// to re-register file cache types that are already registered more frequently)
+	// Copied from FileCacheError.h. Only used to accept DefineType's answer for a type that
+	// is already defined, and the error text is checked too, so a change in the file cache
+	// at worst makes the configurator define such a type again.
 	enum FileCacheFailure {
 		FCErrorNone = 0,
 
@@ -55,107 +46,96 @@ class FileCacheConfiguratorResponse : public ConfiguratorCallback {
 	};
 
 public:
-	FileCacheConfiguratorResponse(FileCacheConfigurator *conf, const string& path)
-		: ConfiguratorCallback(conf, path)
-	{
-	}
+	using ConfiguratorCallback::ConfiguratorCallback;
 
-	~FileCacheConfiguratorResponse()
-	{
-	}
-
-	MojErr Response(MojObject& response, MojErr err)
+	MojErr Response(MojObject& response, MojErr err) override
 	{
 		bool success = true;
-        bool getSuccess = response.get("returnValue", success);
+		const bool getSuccess = response.get("returnValue", success);
 
-		if (err || !getSuccess || !success) {
-			// unfortunately file cache doesn't use regular C++ mojo error codes
-			// & more unfortunately all the various failure reasons for define are hidden
-			// behind 1 error code
-			MojInt64 errorCode;
-			if (response.get("errorCode", errorCode)) {
-				FileCacheFailure failure = (FileCacheFailure)errorCode;
-				// be generous in the error code that can be used
-				if (failure == FCDefineError || failure == FCExistsError) {
-					MojString mojErrorText;
-					string errorText;
-					std::string nakOkSuffix = "' already exists.";
-
-					(void)response.getRequired("errorText", mojErrorText);
-					errorText = mojErrorText.data();
-
-					if (endsWith(errorText, nakOkSuffix)) {
-						LOG_DEBUG("caching negative response for %s", m_config.c_str());
-						bool found = false;
-						response.del("errorCode", found);
-						response.del("errorText", found);
-						err = response.putBool("returnValue", true);
-						MarkConfigured();
-					} else {
-						LOG_WARNING(MSGID_FILE_CACHE_CONFIG_WARNING, 2,
-								PMLOGKS("error", errorText.c_str()),
-								PMLOGKS("suffix", nakOkSuffix.c_str()),
-								"File cache failed to register type (`%s' doesn't end with `%s'", errorText.c_str(), nakOkSuffix.c_str());
-					}
-				} else {
-					LOG_WARNING(MSGID_FILE_CACHE_CONFIG_WARNING, 1,
-							PMLOGKFV("error", "%d", (int)errorCode),
-							"Unrecognized errorCode %d", (int)errorCode);
-				}
-			} else {
-				LOG_WARNING(MSGID_FILE_CACHE_CONFIG_WARNING, 0, "errorCode not provided in request failure");
-			}
-		} else {
+		if (!err && getSuccess && success) {
 			LOG_DEBUG("FileCacheConfigurator response for %s contained no problems", m_config.c_str());
+			return DelegateResponse(response, err);
+		}
+
+		// The file cache does not use MojErr codes, and hides every reason DefineType can
+		// fail for behind one of them.
+		MojInt64 errorCode;
+		if (!response.get("errorCode", errorCode)) {
+			LOG_WARNING(MSGID_FILE_CACHE_CONFIG_WARNING, 0, "errorCode not provided in request failure");
+			return DelegateResponse(response, err);
+		}
+
+		const auto failure = static_cast<FileCacheFailure>(errorCode);
+		if (failure != FCDefineError && failure != FCExistsError) {
+			LOG_WARNING(MSGID_FILE_CACHE_CONFIG_WARNING, 1,
+					PMLOGKFV("error", "%d", (int)errorCode),
+					"Unrecognized errorCode %d", (int)errorCode);
+			return DelegateResponse(response, err);
+		}
+
+		constexpr std::string_view nakOkSuffix = "' already exists.";
+		MojString mojErrorText;
+		(void)response.getRequired("errorText", mojErrorText);
+		const std::string errorText = mojErrorText.data();
+
+		if (errorText.ends_with(nakOkSuffix)) {
+			LOG_DEBUG("caching negative response for %s", m_config.c_str());
+			bool found = false;
+			(void)response.del("errorCode", found);
+			(void)response.del("errorText", found);
+			err = response.putBool("returnValue", true);
+			MarkConfigured();
+		} else {
+			LOG_WARNING(MSGID_FILE_CACHE_CONFIG_WARNING, 2,
+					PMLOGKS("error", errorText.c_str()),
+					PMLOGKS("suffix", nakOkSuffix.data()),
+					"File cache failed to register type (`%s' doesn't end with `%s'", errorText.c_str(), nakOkSuffix.data());
 		}
 		return DelegateResponse(response, err);
 	}
 };
 
+} // namespace
+
 const char* FileCacheConfigurator::ConfiguratorName() const
 {
-	 return "FileCacheConfigurator";
+	return "FileCacheConfigurator";
 }
 
 const char* FileCacheConfigurator::ServiceName() const
 {
-	 return FILECACHE_BUS_ADDRESS;
+	return FILECACHE_BUS_ADDRESS;
 }
 
-FileCacheConfigurator::FileCacheConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, string configDirectory)
-: Configurator(id, confType, type, busClient, configDirectory)
+FileCacheConfigurator::FileCacheConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory)
+	: Configurator(id, confType, type, busClient, configDirectory)
 {
-
 }
 
-FileCacheConfigurator::~FileCacheConfigurator()
-{
-
-}
-
-ConfiguratorCallback* FileCacheConfigurator::CreateCallback(const string& filePath)
+ConfiguratorCallback* FileCacheConfigurator::CreateCallback(const std::string& filePath)
 {
 	return new FileCacheConfiguratorResponse(this, filePath);
 }
 
-MojErr FileCacheConfigurator::ProcessConfig(const string& filePath, MojObject& params)
+MojErr FileCacheConfigurator::ProcessConfig(const std::string& filePath, MojObject& params)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	return m_busClient.CreateRequest()->send(CreateCallback(filePath)->m_slot, FILECACHE_BUS_ADDRESS, FILECACHE_DEFINETYPE_METHOD, params);
 }
 
-MojErr FileCacheConfigurator::ProcessConfigRemoval(const string& filePath, MojObject& params)
+MojErr FileCacheConfigurator::ProcessConfigRemoval(const std::string& filePath, MojObject& params)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
-	MojErr err;
 
 	MojString typeName;
-	err = params.getRequired(FILECACHE_TYPENAME_KEY, typeName); MojErrCheck(err);
+	MojErr err = params.getRequired(FILECACHE_TYPENAME_KEY, typeName);
+	MojErrCheck(err);
 
 	MojObject request(MojObject::TypeObject);
-	err = request.putString(FILECACHE_TYPENAME_KEY, typeName); 	MojErrCheck(err);
+	err = request.putString(FILECACHE_TYPENAME_KEY, typeName);
+	MojErrCheck(err);
 
 	return m_busClient.CreateRequest()->send(CreateCallback(filePath)->m_slot, ServiceName(), FILECACHE_DELETETYPE_METHOD, request);
 }

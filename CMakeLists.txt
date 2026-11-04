@@ -14,7 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 2.8.7)
+cmake_minimum_required(VERSION 3.10)
 
 project(configurator CXX)
 
@@ -22,7 +22,7 @@ include(webOS/webOS)
 webos_modules_init(1 0 0 QUALIFIER RC2)
 webos_component(3 0 0)
 
-webos_add_compiler_flags(ALL "-DMOJ_LINUX" --std=c++0x)
+webos_add_compiler_flags(ALL -DMOJ_LINUX -std=c++23)
 
 include_directories(src)
 
@@ -36,9 +36,6 @@ pkg_check_modules(LUNASERVICE REQUIRED luna-service2)
 include_directories(${LUNASERVICE_INCLUDE_DIRS})
 webos_add_compiler_flags(ALL ${LUNASERVICE_CFLAGS})
 
-# -- check for openssl
-pkg_check_modules(OPENSSL REQUIRED openssl)
-webos_add_compiler_flags(ALL ${OPENSSL_CFLAGS})
 
 pkg_check_modules(DB8 REQUIRED db8>=3)
 include_directories(${DB8_INCLUDE_DIRS})
@@ -51,9 +48,6 @@ if (NOT DEFINED USE_PMLOG OR USE_PMLOG)
     webos_add_compiler_flags(ALL ${PMLOG_CFLAGS_OTHER} -DUSE_PMLOG)
 endif()
 
-if (EXTENSION_STARFISH)
-    add_definitions(-DEXTENSION_STARFISH)
-endif()
 
 if(NO_FIRST_USE)
     add_definitions(-DNO_FIRST_USE)
@@ -62,19 +56,35 @@ endif()
 
 find_library(PTHREAD pthread REQUIRED)
 
-file(GLOB SOURCE_FILES src/*.cpp)
-add_executable(configurator ${SOURCE_FILES} )
+# Everything but main(). tests/ builds the same sources into its own copy,
+# against a Configurator.h whose stamp cache is a scratch directory.
+set(CONFIGURATOR_CORE_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/ActivityConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/BusClient.cpp
+    ${PROJECT_SOURCE_DIR}/src/Configurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/DbKindConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/DbPermissionsConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/FileCacheConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/Log.cpp)
+add_library(configurator-core OBJECT ${CONFIGURATOR_CORE_SOURCES})
+
+add_executable(configurator $<TARGET_OBJECTS:configurator-core> src/main.cpp)
 
 target_link_libraries(configurator
-                    -L.
-                    ${DB8_LDFLAGS}
-                    ${GLIB2_LDFLAGS}
-                    ${LUNASERVICE_LDFLAGS}
-		    ${OPENSSL_LDFLAGS}
-                    ${PTHREAD}
-                    ${PMLOG_LDFLAGS}
-                   )
+    ${DB8_LDFLAGS}
+    ${GLIB2_LDFLAGS}
+    ${LUNASERVICE_LDFLAGS}
+    ${PTHREAD}
+    ${PMLOG_LDFLAGS}
+)
 
 webos_configure_header_files(src)
 webos_build_daemon(NAME configurator LAUNCH files/launch)
 webos_build_system_bus_files()
+
+# Unit tests, off unless asked for. See tests/README.md.
+option(BUILD_TESTING "Build the unit tests in tests/" OFF)
+if (BUILD_TESTING)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,82 +31,46 @@
 */
 
 #include "BusClient.h"
-#include "db/MojDbServiceDefs.h"
 #include "core/MojServiceMessage.h"
 #include "ActivityConfigurator.h"
 #include "DbKindConfigurator.h"
 #include "DbPermissionsConfigurator.h"
 #include "FileCacheConfigurator.h"
 
-#include <algorithm>
-
-using namespace std;
-
-const char* const BusClient::SERVICE_NAME                = "com.palm.configurator";
-const char* const BusClient::ROOT_BASE_DIR               = "/etc/palm/";
-const char* const BusClient::OLD_DB_KIND_DIR             = "db_kinds";	// deprecated
-const char* const BusClient::DB_KIND_DIR                 = "db/kinds";
-const char* const BusClient::DB_PERMISSIONS_DIR          = "db/permissions";
-const char* const BusClient::MEDIADB_KIND_DIR            = "mediadb/kinds";
-const char* const BusClient::MEDIADB_PERMISSIONS_DIR     = "mediadb/permissions";
-const char* const BusClient::TEMPDB_KIND_DIR             = "tempdb/kinds";
-const char* const BusClient::TEMPDB_PERMISSIONS_DIR      = "tempdb/permissions";
-#ifdef EXTENSION_STARFISH
-const char* const BusClient::EPGDB_KIND_DIR              = "epgdb/kinds";
-const char* const BusClient::EPGDB_PERMISSIONS_DIR       = "epgdb/permissions";
-#endif
-const char* const BusClient::FILE_CACHE_CONFIG_DIR       = "filecache_types";
-const char* const BusClient::ACTIVITY_CONFIG_DIR         = "activities";
-const char* const BusClient::FIRST_BOOT_FILE             = "/var/luna/preferences/ran-configurator";
-const char* const BusClient::BASE_CRYPTOFS               = "/media/cryptofs/apps/";
-const char* const BusClient::BASE_ROOT                   = "/";
-const char* const BusClient::BASE_PALM_OFFSET            = "usr/palm/";
-const char* const BusClient::APPS_DIR                    = "applications/";
-const char* const BusClient::SERVICES_DIR                = "services/";
-const char* const BusClient::CONF_SUBDIR                 = "/configuration/";
-
-int main(int argc, char** argv)
-{
-	BusClient app;
-	return app.main(argc, argv);
-}
-
-static inline bool startsWith(const char *str, const std::string& prefix)
-{
-	return 0 == strncmp(str, prefix.c_str(), prefix.length());
-}
+#include <string_view>
+#include <unistd.h>
 
 BusClient::BusMethods::BusMethods(BusClient& client)
 : m_client(client)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	MojErr err = addMethod("run", (Callback) &BusMethods::Run);
+	MojErr err = addMethod("run", static_cast<Callback>(&BusMethods::Run));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register run method: %i", err);
 
-	err = addMethod("scan", (Callback) &BusMethods::Scan);
+	err = addMethod("scan", static_cast<Callback>(&BusMethods::Scan));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register scan method: %i", err);
 
-	err = addMethod("rescan", (Callback) &BusMethods::Rescan);
+	err = addMethod("rescan", static_cast<Callback>(&BusMethods::Rescan));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register rescan method: %i", err);
 
-	err = addMethod("unconfigure", (Callback) &BusMethods::Unconfigure);
+	err = addMethod("unconfigure", static_cast<Callback>(&BusMethods::Unconfigure));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register unconfigure method: %i", err);
 }
 
-static MojErr getTypes(MojObject typesArray, BusClient::ScanTypes &bitmask)
+static MojErr getTypes(const MojObject& typesArray, BusClient::ScanTypes& bitmask)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	MojObject::ConstArrayIterator it = typesArray.arrayBegin();
-	if (it == NULL)
+	if (it == nullptr)
 		MojErrThrowMsg(MojErrInvalidMsg, "'types' not an array");
 
-	for (MojObject::ConstArrayIterator ni = typesArray.arrayEnd(); it != ni; it++) {
+	for (MojObject::ConstArrayIterator ni = typesArray.arrayEnd(); it != ni; ++it) {
 		const MojObject& element = *it;
 		MojString type;
 		MojErr err;
@@ -153,13 +118,13 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Run(MojServiceMessage* msg, MojObject& payload)
+MojErr BusClient::BusMethods::Run(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	m_client.RunNextConfigurator();
 
-	if (WorkEnqueued((Callback) &BusMethods::Run, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Run), msg, payload))
 		return MojErrNone;
 
 	try {
@@ -183,11 +148,11 @@ MojErr BusClient::BusMethods::Run(MojServiceMessage* msg, MojObject& payload)
 	return MojErrNone;
 }
 
-bool BusClient::BusMethods::WorkEnqueued(Callback callback, MojServiceMessage *msg, MojObject &payload)
+bool BusClient::BusMethods::WorkEnqueued(Callback callback, MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	if (m_client.m_msg.get() == NULL)
+	if (m_client.m_msg.get() == nullptr)
 		return false;
 
 	BusClient::PendingWork pending;
@@ -227,11 +192,11 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Rescan(MojServiceMessage* msg, MojObject& payload)
+MojErr BusClient::BusMethods::Rescan(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	if (WorkEnqueued((Callback) &BusMethods::Rescan, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Rescan), msg, payload))
 		return MojErrNone;
 
 	return ScanRequest(msg, payload, BusClient::ForceRescan);
@@ -264,66 +229,86 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Scan(MojServiceMessage* msg, MojObject& payload)
+MojErr BusClient::BusMethods::Scan(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	if (WorkEnqueued((Callback) &BusMethods::Scan, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Scan), msg, payload))
 		return MojErrNone;
 
 	return ScanRequest(msg, payload, BusClient::LazyScan);
 }
 
-MojErr BusClient::BusMethods::ScanRequest(MojServiceMessage* msg, MojObject& payload, ConfigurationMode confmode)
+bool BusClient::IsPackageId(const MojString& id)
+{
+	// An app or service id names a directory under usr/palm/: one path component.
+	const std::string_view name(id.data(), id.length());
+	return !name.empty() && name != "." && name != ".." && name.find('/') == std::string_view::npos;
+}
+
+MojErr BusClient::ParsePackageRequests(const MojObject& payload, bool withTypes, std::vector<PackageRequest>& requests)
+{
+	if (payload.type() != MojObject::TypeArray)
+		MojErrThrowMsg(MojErrInvalidMsg, "invalid message format");
+
+	for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); ++it) {
+		const MojObject& entry = *it;
+		PackageRequest request;
+		MojString typeStr;
+		MojString locationStr;
+
+		MojErr err = entry.getRequired("id", request.id);
+		MojErrCheck(err);
+		if (!IsPackageId(request.id))
+			MojErrThrowMsg(MojErrInvalidArg, "invalid id '%s'", request.id.data());
+
+		err = entry.getRequired("type", typeStr);
+		MojErrCheck(err);
+		if (typeStr == "app")
+			request.type = Application;
+		else if (typeStr == "service")
+			request.type = Service;
+		else
+			MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", typeStr.data());
+
+		err = entry.getRequired("location", locationStr);
+		MojErrCheck(err);
+		if (locationStr == "system")
+			request.location = System;
+		else if (locationStr == "third party")
+			request.location = ThirdParty;
+		else
+			MojErrThrowMsg(MojErrInvalidMsg, "unrecognized location '%s'", locationStr.data());
+
+		request.types = ACTIVITIES | FILECACHE | DBKINDS | DBPERMISSIONS;
+		MojObject typesArray;
+		if (withTypes && entry.get("types", typesArray)) {
+			request.types = ScanTypes();
+			err = getTypes(typesArray, request.types);
+			MojErrCheck(err);
+		}
+
+		requests.push_back(std::move(request));
+	}
+	return MojErrNone;
+}
+
+MojErr BusClient::BusMethods::ScanRequest(MojServiceMessage* msg, const MojObject& payload, ConfigurationMode confmode)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	m_client.RunNextConfigurator();
 
 	try {
-		MojErr err;
-		if (payload.type() != MojObject::TypeArray) {
-			MojErrThrowMsg(MojErrInternal, "invalid message format");
-		}
+		// The whole request is checked before the message is kept for the final reply: a
+		// message the bus answers with an error is not answered again.
+		std::vector<PackageRequest> requests;
+		MojErr err = ParsePackageRequests(payload, false, requests);
+		MojErrCheck(err);
 
 		m_client.m_msg.reset(msg);
-
-		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); it++) {
-			const MojObject& request = *it;
-			MojString locationStr;
-			MojString typeStr;
-			MojString app;
-			BusClient::PackageType type;
-			BusClient::PackageLocation location;
-
-			err = request.getRequired("id", app);
-			MojErrCheck(err);
-
-			err = request.getRequired("type", typeStr);
-			MojErrCheck(err);
-
-			err = request.getRequired("location", locationStr);
-			MojErrCheck(err);
-
-			if (typeStr == "app") {
-				type = BusClient::Application;
-			} else if (typeStr == "service") {
-				type = BusClient::Service;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", typeStr.data());
-			}
-
-			if (locationStr == "system") {
-				location = BusClient::System;
-			} else if (locationStr == "third party") {
-				location = BusClient::ThirdParty;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", locationStr.data());
-			}
-
-			m_client.Scan(confmode, app, type, location);
-		}
-
+		for (const PackageRequest& request : requests)
+			m_client.Scan(confmode, request.id, request.type, request.location);
 	} catch (const std::exception& e) {
 		MojErrThrowMsg(MojErrInternal, "%s", e.what());
 	} catch (...) {
@@ -360,68 +345,23 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage *msg, MojObject &payload)
+MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	m_client.RunNextConfigurator();
 
-	if (WorkEnqueued((Callback) &BusMethods::Unconfigure, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Unconfigure), msg, payload))
 		return MojErrNone;
 
 	try {
-		MojErr err;
-		if (payload.type() != MojObject::TypeArray) {
-			MojErrThrowMsg(MojErrInternal, "invalid message format");
-		}
+		std::vector<PackageRequest> requests;
+		MojErr err = ParsePackageRequests(payload, true, requests);
+		MojErrCheck(err);
 
 		m_client.m_msg.reset(msg);
-
-		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); it++) {
-			const MojObject& request = *it;
-			MojString locationStr;
-			MojString typeStr;
-			MojObject typesArray;
-			MojString app;
-			BusClient::PackageType type;
-			BusClient::PackageLocation location;
-			BusClient::ScanTypes types;
-
-			err = request.getRequired("id", app);
-			MojErrCheck(err);
-
-			err = request.getRequired("type", typeStr);
-			MojErrCheck(err);
-
-			if (!request.get("types", typesArray)) {
-				types = BusClient::ACTIVITIES | BusClient::FILECACHE | BusClient::DBKINDS | BusClient::DBPERMISSIONS;
-			} else {
-				err = getTypes(typesArray, types);
-				MojErrCheck(err);
-			}
-
-			err = request.getRequired("location", locationStr);
-			MojErrCheck(err);
-
-			if (typeStr == "app") {
-				type = BusClient::Application;
-			} else if (typeStr == "service") {
-				type = BusClient::Service;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", typeStr.data());
-			}
-
-			if (locationStr == "system") {
-				location = BusClient::System;
-			} else if (locationStr == "third party") {
-				location = BusClient::ThirdParty;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", locationStr.data());
-			}
-
-			m_client.Unconfigure(app, type, location, types);
-		}
-
+		for (const PackageRequest& request : requests)
+			m_client.Unconfigure(request.id, request.type, request.location, request.types);
 	} catch (const std::exception& e) {
 		MojErrThrowMsg(MojErrInternal, "%s", e.what());
 	} catch (...) {
@@ -431,29 +371,9 @@ MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage *msg, MojObject &pay
 	return MojErrNone;
 }
 
-BusClient::BusClient()
-: m_dbClient(&m_service),
-  m_mediaDbClient(&m_service, MojDbServiceDefs::MediaServiceName),
-  m_tempDbClient(&m_service, MojDbServiceDefs::TempServiceName),
-#ifdef EXTENSION_STARFISH
-  m_epgDbClient(&m_service, MojDbServiceDefs::EpgServiceName),
-#endif
-  m_configuratorsCompleted(0),
-  m_launchedAsService(false),
-  m_shuttingDown(false),
-  m_wrongAplication(false),
-  m_timerTimeout(0)
-{
-}
+BusClient::BusClient() = default;
 
-BusClient::~BusClient()
-{
-}
-
-MojDbClient& BusClient::GetDbClient()
-{
-	return m_dbClient;
-}
+BusClient::~BusClient() = default;
 
 MojRefCountedPtr<MojServiceRequest> BusClient::CreateRequest()
 {
@@ -498,7 +418,7 @@ MojErr BusClient::open()
 
 		err = m_service.addCategory(MojLunaService::DefaultCategory, m_methods.get());
 	}
-	LOG_DEBUG("bus client %p", this);
+	LOG_DEBUG("bus client %p", static_cast<void*>(this));
 
 	return MojErrNone;
 }
@@ -508,7 +428,7 @@ MojErr BusClient::handleArgs(const StringVec& args)
 	MojErr err = Base::handleArgs(args);
 	MojErrCheck(err);
 
-	if (args.size() && args[0] == "service")
+	if (!args.empty() && args[0] == "service")
 		m_launchedAsService = true;
 
 	return MojErrNone;
@@ -571,40 +491,30 @@ void BusClient::ScanDir(const MojString& _id, Configurator::RunType scanType, co
 			LOG_WARNING(MSGID_BUS_CLIENT_ERROR, 1,
 					PMLOGKS("directory", baseDir.c_str()),
 					"Scanning deprecated mojodb config directory under %s", baseDir.c_str());
-			ConfiguratorPtr oldDbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, m_dbClient, baseDir + OLD_DB_KIND_DIR));
+			ConfiguratorPtr oldDbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, baseDir + OLD_DB_KIND_DIR));
 			m_configurators.push_back(oldDbKindConfigurator);
 		}
 
-		ConfiguratorPtr dbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, m_dbClient, baseDir + DB_KIND_DIR));
+		ConfiguratorPtr dbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, baseDir + DB_KIND_DIR));
 		m_configurators.push_back(dbKindConfigurator);
 
-        ConfiguratorPtr mediaDbKindConfigurator(new MediaDbKindConfigurator(id, configType, scanType, *this, m_mediaDbClient, baseDir + MEDIADB_KIND_DIR));
+        ConfiguratorPtr mediaDbKindConfigurator(new MediaDbKindConfigurator(id, configType, scanType, *this, baseDir + MEDIADB_KIND_DIR));
         m_configurators.push_back(mediaDbKindConfigurator);
 
-		ConfiguratorPtr tempDbKindConfigurator(new TempDbKindConfigurator(id, configType, scanType, *this, m_tempDbClient, baseDir + TEMPDB_KIND_DIR));
+		ConfiguratorPtr tempDbKindConfigurator(new TempDbKindConfigurator(id, configType, scanType, *this, baseDir + TEMPDB_KIND_DIR));
 		m_configurators.push_back(tempDbKindConfigurator);
-
-#ifdef EXTENSION_STARFISH
-		ConfiguratorPtr epgDbKindConfigurator(new EpgDbKindConfigurator(id, configType, scanType, *this, m_epgDbClient, baseDir + EPGDB_KIND_DIR));
-		m_configurators.push_back(epgDbKindConfigurator);
-#endif
 
 	}
 
 	if (bitmask & DBPERMISSIONS) {
-		ConfiguratorPtr dbPermsConfigurator(new DbPermissionsConfigurator(id, configType, scanType, *this, m_dbClient, baseDir + DB_PERMISSIONS_DIR));
+		ConfiguratorPtr dbPermsConfigurator(new DbPermissionsConfigurator(id, configType, scanType, *this, baseDir + DB_PERMISSIONS_DIR));
 		m_configurators.push_back(dbPermsConfigurator);
 
-        ConfiguratorPtr mediaDbPermsConfigurator(new MediaDbPermissionsConfigurator(id, configType, scanType, *this, m_mediaDbClient, baseDir + MEDIADB_PERMISSIONS_DIR));
+        ConfiguratorPtr mediaDbPermsConfigurator(new MediaDbPermissionsConfigurator(id, configType, scanType, *this, baseDir + MEDIADB_PERMISSIONS_DIR));
         m_configurators.push_back(mediaDbPermsConfigurator);
 
-		ConfiguratorPtr tempDbPermsConfigurator(new TempDbPermissionsConfigurator(id, configType, scanType, *this, m_tempDbClient, baseDir + TEMPDB_PERMISSIONS_DIR));
+		ConfiguratorPtr tempDbPermsConfigurator(new TempDbPermissionsConfigurator(id, configType, scanType, *this, baseDir + TEMPDB_PERMISSIONS_DIR));
 		m_configurators.push_back(tempDbPermsConfigurator);
-
-#ifdef EXTENSION_STARFISH
-		ConfiguratorPtr epgDbPermsConfigurator(new EpgDbPermissionsConfigurator(id, configType, scanType, *this, m_epgDbClient, baseDir + EPGDB_PERMISSIONS_DIR));
-		m_configurators.push_back(epgDbPermsConfigurator);
-#endif
 	}
 
 	if (bitmask & FILECACHE) {
@@ -613,7 +523,7 @@ void BusClient::ScanDir(const MojString& _id, Configurator::RunType scanType, co
 	}
 
 	if (bitmask & ACTIVITIES) {
-		ActivityConfigurator *activityConfigurator = new ActivityConfigurator(id, configType, scanType, *this, baseDir + ACTIVITY_CONFIG_DIR);
+		ConfiguratorPtr activityConfigurator(new ActivityConfigurator(id, configType, scanType, *this, baseDir + ACTIVITY_CONFIG_DIR));
 		m_configurators.push_back(activityConfigurator);
 	}
 }
@@ -664,18 +574,18 @@ gboolean BusClient::IterateConfiguratorsCallback(gpointer data)
 		if (!client->m_shuttingDown) {
 			LOG_DEBUG("No more configurators left (%zu configurations completed, %zu configurations failed), shutting down.", Configurator::ConfigureOk().size(), Configurator::ConfigureFailure().size());
 			client->ScheduleShutdown();
-			return client->m_msg.get() != NULL;
+			return client->m_msg.get() != nullptr;
 		}
 		return false;
 	}
 
 	gboolean configurationsRemaining = FALSE;
 	// iterate through 1 file in each configurator
-	for (int i = 0, ni = client->m_configurators.size(); i < ni; i++) {
+	for (size_t i = 0, ni = client->m_configurators.size(); i < ni; ++i) {
 		bool exceptionThrown = true;
 		try {
 				ConfiguratorPtr configurator = client->m_configurators[i];
-				if (configurator.get() == NULL)
+				if (configurator.get() == nullptr)
 					continue;
 
 				if (!configurator->Run())
@@ -701,35 +611,30 @@ gboolean BusClient::IterateConfiguratorsCallback(gpointer data)
 
 void BusClient::ConfiguratorComplete(ConfiguratorCollection::iterator configurator)
 {
-    LOG_TRACE("Entering function %s", __FUNCTION__);
+	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-    ConfiguratorPtr ptr(*configurator);
-    if( ptr.get() ) 
-        LOG_DEBUG("... configurator %s complete (%p), %zd left.", ptr->ConfiguratorName(), configurator->get(), m_configurators.size() - 1);
+	if (Configurator* done = configurator->get())
+		LOG_DEBUG("... configurator %s complete (%p), %zu left.", done->ConfiguratorName(), static_cast<void*>(done), m_configurators.size() - 1);
 
-     configurator->reset();
-     m_configuratorsCompleted++;
-     RunNextConfigurator();
+	configurator->reset();
+	m_configuratorsCompleted++;
+	RunNextConfigurator();
 }
 
 void BusClient::ConfiguratorComplete(Configurator* configurator)
 {
-	ConfiguratorCollection::iterator i, ni;
-	for (i = m_configurators.begin(), ni = m_configurators.end(); i != ni; i++) {
-		ConfiguratorPtr ptr(*i);
-		if (ptr.get() && &(*ptr) == configurator) {
+	for (auto i = m_configurators.begin(); i != m_configurators.end(); ++i) {
+		if (i->get() == configurator) {
 			ConfiguratorComplete(i);
 			return;
 		}
 	}
 }
 
-void BusClient::ConfiguratorComplete(int configuratorIndex)
+void BusClient::ConfiguratorComplete(size_t configuratorIndex)
 {
-    if( configuratorIndex < m_configurators.size() ) {
-        ConfiguratorCollection::iterator i = m_configurators.begin() + configuratorIndex;
-        ConfiguratorComplete(i);
-    }
+	if (configuratorIndex < m_configurators.size())
+		ConfiguratorComplete(m_configurators.begin() + static_cast<std::ptrdiff_t>(configuratorIndex));
 }
 
 void BusClient::ScheduleShutdown()
@@ -742,7 +647,7 @@ void BusClient::ScheduleShutdown()
 
 		if (m_wrongAplication) {
 			MojString response;
-			response.appendFormat("Application or service doesn't exist");
+			(void)response.appendFormat("Application or service doesn't exist");
 			m_wrongAplication = false;
             if(m_msg->replyError(MojErrInternal, response.data()) != MojErrNone) {
                 LOG_WARNING(MSGID_SHUTDOWN_ERROR, 1, PMLOGKS("Response", response.data()), "Application or service doesn't exist");
@@ -755,7 +660,7 @@ void BusClient::ScheduleShutdown()
             }
 		} else {
 			MojObject response;
-			response.putInt("configured", ok.size());
+			(void)response.putInt("configured", static_cast<MojInt64>(ok.size()));
             if(m_msg->replySuccess(response) != MojErrNone) {
                 LOG_WARNING(MSGID_SHUTDOWN_ERROR, 0, "Configured");
             }
@@ -771,10 +676,11 @@ void BusClient::ScheduleShutdown()
 		m_configurators.clear();
 		Configurator::ResetConfigStats();
 
-		const PendingWork &pending = m_pending.back();
-		(void)(pending.instance->*(pending.callback))(pending.msg.get(), pending.payload);
-
+		// Taken off the list before it runs: the handler may queue more work, and a
+		// reference into the vector would not survive that.
+		PendingWork pending = std::move(m_pending.back());
 		m_pending.pop_back();
+		(void)(pending.instance->*(pending.callback))(pending.msg.get(), pending.payload);
 		return;
 	}
 
@@ -790,10 +696,9 @@ void BusClient::ScheduleShutdown()
 		    500, /* timeout in ms */
 		    &BusClient::ShutdownCallback, // callback
 		    this, /* callback data */
-		    NULL /*destroy notify callback*/
+		    nullptr /*destroy notify callback*/
 		);
 	}
-	//g_idle_add(&BusClient::ShutdownCallback, this);
 
 	m_shuttingDown = true;
 }

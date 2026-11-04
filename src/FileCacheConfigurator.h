@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2018 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,25 +20,25 @@
 
 #include "Configurator.h"
 
+// Defines the file cache types in a directory with com.palm.filecache.
 class FileCacheConfigurator : public Configurator
 {
 public:
-	FileCacheConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, std::string configDirectory);
-	virtual ~FileCacheConfigurator();
+	FileCacheConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory);
 
 protected:
-	virtual MojErr ProcessConfig(const std::string& filePath, MojObject& params);
-	virtual MojErr ProcessConfigRemoval(const std::string &filePath, MojObject &json);
+	MojErr ProcessConfig(const std::string& filePath, MojObject& params) override;
+	MojErr ProcessConfigRemoval(const std::string& filePath, MojObject& json) override;
 
-	virtual ConfiguratorCallback* CreateCallback(const std::string& filePath);
-	virtual const char* ConfiguratorName() const;
-	virtual const char* ServiceName() const;
+	ConfiguratorCallback* CreateCallback(const std::string& filePath) override;
+	const char* ConfiguratorName() const override;
+	const char* ServiceName() const override;
 
 private:
-	static const char* const FILECACHE_BUS_ADDRESS;
-	static const char* const FILECACHE_DEFINETYPE_METHOD;
-	static const char* const FILECACHE_DELETETYPE_METHOD;
-	static const char* const FILECACHE_TYPENAME_KEY;
+	static constexpr const char* FILECACHE_BUS_ADDRESS       = "com.palm.filecache";
+	static constexpr const char* FILECACHE_DEFINETYPE_METHOD = "DefineType";
+	static constexpr const char* FILECACHE_DELETETYPE_METHOD = "DeleteType";
+	static constexpr const char* FILECACHE_TYPENAME_KEY      = "typeName";
 };
 
 #endif /* FILECACHECONFIGURATOR_H_ */
