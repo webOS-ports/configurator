@@ -24,10 +24,6 @@
 #include <string>
 #include <vector>
 
-#ifdef EXTENSION_STARFISH
-#include "md5sum.h"
-#endif
-
 class ConfiguratorCallback;
 
 static const MojModeT kCacheDirPerms = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
@@ -91,13 +87,7 @@ private:
 	bool              IsAlreadyConfigured(const std::string &confFile) const;
 	bool              GetConfigFiles(const std::string& parent, const std::string& directory);
 	const std::string ReadFile(const std::string& filePath) const;
-#ifndef EXTENSION_STARFISH
 	bool              WriteStampChecksum(int stampFd, const std::string& confFile) const;
-#endif
-#ifdef EXTENSION_STARFISH
-	bool              WriteFile(const std::string path, const std::string contents)const;
-	bool              GenerateandVerifyConfigChecksum(const std::string& path,  std::string cachepath)const;
-#endif
 	void              Complete();
 	MojErr            BusResponseAsync(const std::string& filePath, MojObject& response, MojErr err, bool *cacheConfigured);
 

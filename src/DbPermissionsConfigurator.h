@@ -57,15 +57,4 @@ protected:
 	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
 };
 
-class EpgDbPermissionsConfigurator : public DbPermissionsConfigurator
-{
-public:
-	EpgDbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
-
-protected:
-	virtual const char* ServiceName() const;
-
-	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
-};
-
 #endif /* DBPERMISSIONSCONFIGURATOR_H_ */

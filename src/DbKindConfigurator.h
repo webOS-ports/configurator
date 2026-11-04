@@ -58,17 +58,4 @@ protected:
 	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
 };
 
-#ifdef EXTENSION_STARFISH
-class EpgDbKindConfigurator : public DbKindConfigurator
-{
-public:
-	EpgDbKindConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
-
-protected:
-	virtual const char* ServiceName() const;
-
-	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
-};
-#endif /* EXTENSION_STARFISH */
-
 #endif /* DBKINDCONFIGURATOR_H_ */

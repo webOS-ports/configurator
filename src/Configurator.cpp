@@ -172,7 +172,6 @@ void Configurator::InitCacheDir() const
 	MojMkDir(kConfCacheDir, kCacheStampPerm);
 }
 
-#ifndef EXTENSION_STARFISH
 // What a stamp records: the SHA-256 of a configuration's contents, in hex.
 static std::string ContentChecksum(const std::string& contents)
 {
@@ -193,7 +192,6 @@ bool Configurator::WriteStampChecksum(int stampFd, const std::string& confFile) 
     const ssize_t written = write(stampFd, sum.data(), sum.size());
     return written >= 0 && static_cast<size_t>(written) == sum.size();
 }
-#endif
 
 bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
 {
@@ -202,12 +200,6 @@ bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
             return false;
         }
 
-#ifdef EXTENSION_STARFISH
-    std::string stamp = kConfCacheDir + Replace(confFile, "/", "_");
-    LOG_DEBUG("%s may already be configured - %s exists", confFile.c_str(), stamp.c_str());
-    bool returnvalue = GenerateandVerifyConfigChecksum(confFile, std::move(stamp));
-    return returnvalue;
-#else
     // A file counts as configured while its contents are what the stamp records. Comparing
     // mtimes is not enough: a reproducible image gives every file the same mtime, so a file an
     // update changed never looked newer than its stamp and was skipped for good. A stamp that
@@ -227,7 +219,6 @@ bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
 
     LOG_DEBUG("%s may already be configured - %s exists", confFile.c_str(), stamp.c_str());
     return recorded == ContentChecksum(ReadFile(confFile));
-#endif
 }
 
 void Configurator::MarkConfigured(const std::string &confFile) const
@@ -274,12 +265,10 @@ void Configurator::MarkConfigured(const std::string &confFile) const
         return;
     }
 
-#ifndef EXTENSION_STARFISH
     if (!WriteStampChecksum(stampFd, confFile))
         LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
             PMLOGKS("file", confFile.c_str()),
             "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
-#endif
 
     if (-1 == futimes(stampFd, times)) {
         // fall through to close()
@@ -325,12 +314,10 @@ void Configurator::MarkConfigured(const std::string &confFile) const
         return;
     }
 
-#ifndef EXTENSION_STARFISH
     if (!WriteStampChecksum(stampFd, confFile))
         LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
             PMLOGKS("file", confFile.c_str()),
             "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
-#endif
 
     if (-1 == futimens(stampFd, times)) {
         // fall through to close()
@@ -548,82 +535,6 @@ const string Configurator::ReadFile(const string& filePath) const
 	return contents;
 }
 
-#ifdef EXTENSION_STARFISH
-bool Configurator::WriteFile(const std::string path, const std::string contents) const
-{
-    std::ofstream file(path.c_str());
-
-    if(file.good())
-    {
-        file << contents;
-        file.flush();
-        file.close();
-        return true;
-    }
-    return false;
-}
-
-bool Configurator::GenerateandVerifyConfigChecksum(const std::string& path,  std::string cachepath) const
-{
-
-	/* Reading the actual path e.g:/etc/palm/db/permissions/filename. If the data is there,
-	*then we calculate checksum value for the config files.*/
-	string contents = ReadFile(path);
-	std::string current_checksum;
-	std::string previous_checksum;
-	bool retvalue = true;
-	ifstream checkfile;
-	bool m_newfile = false;
-
-	/*Checking whether the checksum file is already exists or not. If it doesn't exists, we will create
-	* a checksum file. If already exist, we validate the checksum value*/
-	if(ReadFile(cachepath + ".md5").empty())
-		{
-			/*If checksum file is not there, we set this flag to generate the
-			* checksum file.*/
-			m_newfile = true;
-		}
-	else
-		{
-			/*Checksum file already exists, read the checksum value.*/
-			checkfile.open(cachepath);
-			previous_checksum = ReadFile(cachepath);
-		}
-	if(contents.empty())
-		{
-			return true;
-		}
-	else
-		{
-			/*Calculating the checksum value for actual data*/
-			current_checksum = makeMD5Checksum(contents);
-		}
-	/*Storing the Checksum value in /var/cache/configurator/filemname.md5*/
-	if(m_newfile == true)
-		{
-			WriteFile(cachepath + ".md5", std::move(current_checksum));
-			retvalue = false;
-		}
-	else
-		{
-			/*Checking the checksum data of the file, if data is not modified,
-			* then nothing to do. If data is modified, update the latest checksum value
-			* then return as false.*/
-			if (current_checksum == previous_checksum)
-				{
-					LOG_DEBUG("[%s %d] md5 same", __FUNCTION__,__LINE__);
-					retvalue = true;
-				}
-			else
-				{
-					LOG_DEBUG("[%s %d] md5 diff", __FUNCTION__,__LINE__);
-					WriteFile(cachepath + ".md5", std::move(current_checksum));
-					retvalue = false;
-				}
-		}
-	return retvalue;
-}
-#endif
 
 void Configurator::Complete()
 {

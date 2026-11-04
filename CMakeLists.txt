@@ -36,9 +36,6 @@ pkg_check_modules(LUNASERVICE REQUIRED luna-service2)
 include_directories(${LUNASERVICE_INCLUDE_DIRS})
 webos_add_compiler_flags(ALL ${LUNASERVICE_CFLAGS})
 
-# -- check for openssl
-pkg_check_modules(OPENSSL REQUIRED openssl)
-webos_add_compiler_flags(ALL ${OPENSSL_CFLAGS})
 
 pkg_check_modules(DB8 REQUIRED db8>=3)
 include_directories(${DB8_INCLUDE_DIRS})
@@ -51,9 +48,6 @@ if (NOT DEFINED USE_PMLOG OR USE_PMLOG)
     webos_add_compiler_flags(ALL ${PMLOG_CFLAGS_OTHER} -DUSE_PMLOG)
 endif()
 
-if (EXTENSION_STARFISH)
-    add_definitions(-DEXTENSION_STARFISH)
-endif()
 
 if(NO_FIRST_USE)
     add_definitions(-DNO_FIRST_USE)
@@ -70,8 +64,7 @@ add_library(configurator-core OBJECT
     src/DbKindConfigurator.cpp
     src/DbPermissionsConfigurator.cpp
     src/FileCacheConfigurator.cpp
-    src/Log.cpp
-    src/md5sum.cpp)
+    src/Log.cpp)
 
 add_executable(configurator $<TARGET_OBJECTS:configurator-core> src/main.cpp)
 
@@ -79,7 +72,6 @@ target_link_libraries(configurator
     ${DB8_LDFLAGS}
     ${GLIB2_LDFLAGS}
     ${LUNASERVICE_LDFLAGS}
-    ${OPENSSL_LDFLAGS}
     ${PTHREAD}
     ${PMLOG_LDFLAGS}
 )
