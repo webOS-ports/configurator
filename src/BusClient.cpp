@@ -64,12 +64,6 @@ const char* const BusClient::APPS_DIR                    = "applications/";
 const char* const BusClient::SERVICES_DIR                = "services/";
 const char* const BusClient::CONF_SUBDIR                 = "/configuration/";
 
-int main(int argc, char** argv)
-{
-	BusClient app;
-	return app.main(argc, argv);
-}
-
 static inline bool startsWith(const char *str, const std::string& prefix)
 {
 	return 0 == strncmp(str, prefix.c_str(), prefix.length());
