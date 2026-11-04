@@ -162,15 +162,17 @@ void Configurator::InitCacheDir() const
 	MojMkDir(kConfCacheDir, kCacheStampPerm);
 }
 
-// Write the checksum of confFile into an open stamp. A stamp left without one only makes the
-// file configure again next time.
-bool Configurator::WriteStampChecksum(int stampFd, const std::string& confFile) const
+// The checksum a stamp for confFile is to record: that of the contents Run() sent, not of
+// the file as it is now. Were it read again here, a file changed while the service was
+// answering would be stamped with contents that were never configured, and skipped from
+// then on.
+std::string Configurator::ProcessedChecksum(const std::string& confFile) const
 {
-	const std::string sum = ContentChecksum(ReadFile(confFile));
-	if (sum.empty())
-		return false;
-	const ssize_t written = write(stampFd, sum.data(), sum.size());
-	return written >= 0 && static_cast<size_t>(written) == sum.size();
+	const auto i = m_processedChecksums.find(confFile);
+	if (i != m_processedChecksums.end())
+		return i->second;
+	// marked without having been through Run() in this configurator
+	return ContentChecksum(ReadFile(confFile));
 }
 
 bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
@@ -224,8 +226,9 @@ void Configurator::MarkConfigured(const std::string& confFile) const
 			"Using current time as timestamp - couldn't get timestamp of conf file (%s)", strerror(errno));
 	}
 
+	// O_NOFOLLOW: a symlink planted in the cache must not redirect the write.
 	const std::string stamp = StampPath(confFile);
-	const int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
+	const int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME | O_NOFOLLOW | O_CLOEXEC, kCacheStampPerm);
 	if (stampFd == -1) {
 		LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
 			PMLOGKS("file", confFile.c_str()),
@@ -234,7 +237,10 @@ void Configurator::MarkConfigured(const std::string& confFile) const
 		return;
 	}
 
-	if (!WriteStampChecksum(stampFd, confFile))
+	// A stamp left without its checksum only makes the file configure again next time.
+	const std::string sum = ProcessedChecksum(confFile);
+	const ssize_t written = sum.empty() ? -1 : write(stampFd, sum.data(), sum.size());
+	if (written < 0 || static_cast<size_t>(written) != sum.size())
 		LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
 			PMLOGKS("file", confFile.c_str()),
 			"Could not record the checksum of %s; it is configured again next time", confFile.c_str());
@@ -294,55 +300,57 @@ bool Configurator::Run()
 		m_scanned = true;
 	}
 
-	if (m_configs.empty()) {
-		if (m_pendingConfigs.empty() && !m_completed) {
-			if (!m_emptyConfigurator)
-				LOG_DEBUG("%s :: No more configurations", ConfiguratorName());
-			Complete();
-		} else {
-			LOG_DEBUG("%s :: %zu configurations pending, m_completed = %d", ConfiguratorName(), m_pendingConfigs.size(), m_completed);
+	// Send the next file's request. One that fails or needs no request is passed over for
+	// the one after it, in a loop: a directory of failing files does not grow the stack.
+	while (!m_configs.empty()) {
+		const std::string filePath = m_configs.back();
+		m_configs.pop_back();
+		m_pendingConfigs.push_back(filePath);
+		const std::string config = ReadFile(filePath);
+		m_processedChecksums[filePath] = ContentChecksum(config);
+
+		LOG_DEBUG("%s :: Configuring '%s'", ConfiguratorName(), filePath.c_str());
+
+		MojErr err = MojErrNone;
+		switch (m_currentType) {
+		case Configure:
+		case Reconfigure:
+			err = ProcessConfig(filePath, config);
+			break;
+		case RemoveConfiguration:
+			err = ProcessConfigRemoval(filePath, config);
+			break;
 		}
-		// nothing to do - already sent out all the requests
-		// just waiting for responses from services
-		return m_configs.empty();
-	}
 
-	const std::string filePath = m_configs.back();
-	m_configs.pop_back();
-	m_pendingConfigs.push_back(filePath);
-	const std::string config = ReadFile(filePath);
+		if (!err)
+			return m_configs.empty();
 
-	LOG_DEBUG("%s :: Configuring '%s'", ConfiguratorName(), filePath.c_str());
-
-	MojErr err = MojErrNone;
-	switch (m_currentType) {
-	case Configure:
-	case Reconfigure:
-		err = ProcessConfig(filePath, config);
-		break;
-	case RemoveConfiguration:
-		err = ProcessConfigRemoval(filePath, config);
-		break;
-	}
-
-	if (err) {
 		if (MojErrInProgress == err) {
-			m_configureOk.push_back(config);
+			m_configureOk.push_back(filePath);
 			LOG_DEBUG("Skipping config file: %s", filePath.c_str());
 		} else {
 			MojString errorMsg;
 			MojErrToString(err, errorMsg);
 			LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
-					PMLOGKS("config", config.c_str()),
+					PMLOGKS("config", filePath.c_str()),
 					PMLOGKS("error", errorMsg.data()),
-					"Failed to process config: %s (error: %s)", config.c_str(), errorMsg.data());
+					"Failed to process config: %s (error: %s)", filePath.c_str(), errorMsg.data());
 			// Skip this file and keep going!
 			m_configureFailed.push_back(filePath);
 		}
 		m_pendingConfigs.pop_back();
-		return Run();
 	}
-	return m_configs.empty();
+
+	if (m_pendingConfigs.empty() && !m_completed) {
+		if (!m_emptyConfigurator)
+			LOG_DEBUG("%s :: No more configurations", ConfiguratorName());
+		Complete();
+	} else {
+		LOG_DEBUG("%s :: %zu configurations pending, m_completed = %d", ConfiguratorName(), m_pendingConfigs.size(), m_completed);
+	}
+	// nothing to do - already sent out all the requests
+	// just waiting for responses from services
+	return true;
 }
 
 MojErr Configurator::ProcessConfig(const std::string& filePath, const std::string& json)
@@ -366,6 +374,12 @@ MojErr Configurator::ProcessConfigRemoval(const std::string& filePath, const std
 // returns whether the folder exists
 bool Configurator::GetConfigFiles(const std::string& parent, const std::string& directory)
 {
+	VisitedDirs visited;
+	return GetConfigFiles(parent, directory, visited);
+}
+
+bool Configurator::GetConfigFiles(const std::string& parent, const std::string& directory, VisitedDirs& visited)
+{
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	DIR* dp = opendir(directory.c_str());
@@ -377,6 +391,15 @@ bool Configurator::GetConfigFiles(const std::string& parent, const std::string& 
 		return false;
 	}
 
+	struct stat dirStat;
+	if (fstat(dirfd(dp), &dirStat) == 0 && !visited.emplace(dirStat.st_dev, dirStat.st_ino).second) {
+		LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+				PMLOGKS("directory", directory.c_str()),
+				"Skipping %s: already scanned (a symlink loop?)", directory.c_str());
+		(void)closedir(dp);
+		return true;
+	}
+
 	LOG_DEBUG("Reading config files in '%s' under '%s'", directory.c_str(), parent.c_str());
 
 	while (const struct dirent* dirp = readdir(dp)) {
@@ -384,15 +407,25 @@ bool Configurator::GetConfigFiles(const std::string& parent, const std::string& 
 		if (filename == "." || filename == "..")
 			continue;
 
+		// stat, not lstat: a configuration may be a symlink to its file.
 		const std::string filePath = directory + "/" + filename;
 		struct stat statBuf;
 		if (stat(filePath.c_str(), &statBuf) != 0) {
-			LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 0, "Failed to get file information on: %s", filename.c_str());
-			break;
+			// a dangling symlink, or a file gone since readdir: the rest are still read
+			LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 0, "Failed to get file information on: %s", filePath.c_str());
+			continue;
 		}
 
 		if (S_ISDIR(statBuf.st_mode)) {
-			(void)GetConfigFiles(filename, filePath);
+			(void)GetConfigFiles(filename, filePath, visited);
+			continue;
+		}
+
+		// Only regular files: reading a FIFO or a device would block the configurator.
+		if (!S_ISREG(statBuf.st_mode)) {
+			LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+					PMLOGKS("file", filePath.c_str()),
+					"Skipping %s: not a regular file", filePath.c_str());
 			continue;
 		}
 

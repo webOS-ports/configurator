@@ -37,6 +37,7 @@
 #include "DbPermissionsConfigurator.h"
 #include "FileCacheConfigurator.h"
 
+#include <string_view>
 #include <unistd.h>
 
 BusClient::BusMethods::BusMethods(BusClient& client)
@@ -44,19 +45,19 @@ BusClient::BusMethods::BusMethods(BusClient& client)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	MojErr err = addMethod("run", (Callback) &BusMethods::Run);
+	MojErr err = addMethod("run", static_cast<Callback>(&BusMethods::Run));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register run method: %i", err);
 
-	err = addMethod("scan", (Callback) &BusMethods::Scan);
+	err = addMethod("scan", static_cast<Callback>(&BusMethods::Scan));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register scan method: %i", err);
 
-	err = addMethod("rescan", (Callback) &BusMethods::Rescan);
+	err = addMethod("rescan", static_cast<Callback>(&BusMethods::Rescan));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register rescan method: %i", err);
 
-	err = addMethod("unconfigure", (Callback) &BusMethods::Unconfigure);
+	err = addMethod("unconfigure", static_cast<Callback>(&BusMethods::Unconfigure));
 	if (err)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register unconfigure method: %i", err);
 }
@@ -117,13 +118,13 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Run(MojServiceMessage* msg, MojObject& payload)
+MojErr BusClient::BusMethods::Run(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	m_client.RunNextConfigurator();
 
-	if (WorkEnqueued((Callback) &BusMethods::Run, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Run), msg, payload))
 		return MojErrNone;
 
 	try {
@@ -147,7 +148,7 @@ MojErr BusClient::BusMethods::Run(MojServiceMessage* msg, MojObject& payload)
 	return MojErrNone;
 }
 
-bool BusClient::BusMethods::WorkEnqueued(Callback callback, MojServiceMessage *msg, MojObject &payload)
+bool BusClient::BusMethods::WorkEnqueued(Callback callback, MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
@@ -191,11 +192,11 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Rescan(MojServiceMessage* msg, MojObject& payload)
+MojErr BusClient::BusMethods::Rescan(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	if (WorkEnqueued((Callback) &BusMethods::Rescan, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Rescan), msg, payload))
 		return MojErrNone;
 
 	return ScanRequest(msg, payload, BusClient::ForceRescan);
@@ -228,66 +229,86 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Scan(MojServiceMessage* msg, MojObject& payload)
+MojErr BusClient::BusMethods::Scan(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	if (WorkEnqueued((Callback) &BusMethods::Scan, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Scan), msg, payload))
 		return MojErrNone;
 
 	return ScanRequest(msg, payload, BusClient::LazyScan);
 }
 
-MojErr BusClient::BusMethods::ScanRequest(MojServiceMessage* msg, MojObject& payload, ConfigurationMode confmode)
+bool BusClient::IsPackageId(const MojString& id)
+{
+	// An app or service id names a directory under usr/palm/: one path component.
+	const std::string_view name(id.data(), id.length());
+	return !name.empty() && name != "." && name != ".." && name.find('/') == std::string_view::npos;
+}
+
+MojErr BusClient::ParsePackageRequests(const MojObject& payload, bool withTypes, std::vector<PackageRequest>& requests)
+{
+	if (payload.type() != MojObject::TypeArray)
+		MojErrThrowMsg(MojErrInvalidMsg, "invalid message format");
+
+	for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); ++it) {
+		const MojObject& entry = *it;
+		PackageRequest request;
+		MojString typeStr;
+		MojString locationStr;
+
+		MojErr err = entry.getRequired("id", request.id);
+		MojErrCheck(err);
+		if (!IsPackageId(request.id))
+			MojErrThrowMsg(MojErrInvalidArg, "invalid id '%s'", request.id.data());
+
+		err = entry.getRequired("type", typeStr);
+		MojErrCheck(err);
+		if (typeStr == "app")
+			request.type = Application;
+		else if (typeStr == "service")
+			request.type = Service;
+		else
+			MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", typeStr.data());
+
+		err = entry.getRequired("location", locationStr);
+		MojErrCheck(err);
+		if (locationStr == "system")
+			request.location = System;
+		else if (locationStr == "third party")
+			request.location = ThirdParty;
+		else
+			MojErrThrowMsg(MojErrInvalidMsg, "unrecognized location '%s'", locationStr.data());
+
+		request.types = ACTIVITIES | FILECACHE | DBKINDS | DBPERMISSIONS;
+		MojObject typesArray;
+		if (withTypes && entry.get("types", typesArray)) {
+			request.types = ScanTypes();
+			err = getTypes(typesArray, request.types);
+			MojErrCheck(err);
+		}
+
+		requests.push_back(std::move(request));
+	}
+	return MojErrNone;
+}
+
+MojErr BusClient::BusMethods::ScanRequest(MojServiceMessage* msg, const MojObject& payload, ConfigurationMode confmode)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	m_client.RunNextConfigurator();
 
 	try {
-		MojErr err;
-		if (payload.type() != MojObject::TypeArray) {
-			MojErrThrowMsg(MojErrInternal, "invalid message format");
-		}
+		// The whole request is checked before the message is kept for the final reply: a
+		// message the bus answers with an error is not answered again.
+		std::vector<PackageRequest> requests;
+		MojErr err = ParsePackageRequests(payload, false, requests);
+		MojErrCheck(err);
 
 		m_client.m_msg.reset(msg);
-
-		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); ++it) {
-			const MojObject& request = *it;
-			MojString locationStr;
-			MojString typeStr;
-			MojString app;
-			BusClient::PackageType type;
-			BusClient::PackageLocation location;
-
-			err = request.getRequired("id", app);
-			MojErrCheck(err);
-
-			err = request.getRequired("type", typeStr);
-			MojErrCheck(err);
-
-			err = request.getRequired("location", locationStr);
-			MojErrCheck(err);
-
-			if (typeStr == "app") {
-				type = BusClient::Application;
-			} else if (typeStr == "service") {
-				type = BusClient::Service;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", typeStr.data());
-			}
-
-			if (locationStr == "system") {
-				location = BusClient::System;
-			} else if (locationStr == "third party") {
-				location = BusClient::ThirdParty;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", locationStr.data());
-			}
-
-			m_client.Scan(confmode, app, type, location);
-		}
-
+		for (const PackageRequest& request : requests)
+			m_client.Scan(confmode, request.id, request.type, request.location);
 	} catch (const std::exception& e) {
 		MojErrThrowMsg(MojErrInternal, "%s", e.what());
 	} catch (...) {
@@ -324,68 +345,23 @@ None
 */
 //->End of API documentation comment block
 
-MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage *msg, MojObject &payload)
+MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage* msg, const MojObject& payload)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	m_client.RunNextConfigurator();
 
-	if (WorkEnqueued((Callback) &BusMethods::Unconfigure, msg, payload))
+	if (WorkEnqueued(static_cast<Callback>(&BusMethods::Unconfigure), msg, payload))
 		return MojErrNone;
 
 	try {
-		MojErr err;
-		if (payload.type() != MojObject::TypeArray) {
-			MojErrThrowMsg(MojErrInternal, "invalid message format");
-		}
+		std::vector<PackageRequest> requests;
+		MojErr err = ParsePackageRequests(payload, true, requests);
+		MojErrCheck(err);
 
 		m_client.m_msg.reset(msg);
-
-		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); ++it) {
-			const MojObject& request = *it;
-			MojString locationStr;
-			MojString typeStr;
-			MojObject typesArray;
-			MojString app;
-			BusClient::PackageType type;
-			BusClient::PackageLocation location;
-			BusClient::ScanTypes types;
-
-			err = request.getRequired("id", app);
-			MojErrCheck(err);
-
-			err = request.getRequired("type", typeStr);
-			MojErrCheck(err);
-
-			if (!request.get("types", typesArray)) {
-				types = BusClient::ACTIVITIES | BusClient::FILECACHE | BusClient::DBKINDS | BusClient::DBPERMISSIONS;
-			} else {
-				err = getTypes(typesArray, types);
-				MojErrCheck(err);
-			}
-
-			err = request.getRequired("location", locationStr);
-			MojErrCheck(err);
-
-			if (typeStr == "app") {
-				type = BusClient::Application;
-			} else if (typeStr == "service") {
-				type = BusClient::Service;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", typeStr.data());
-			}
-
-			if (locationStr == "system") {
-				location = BusClient::System;
-			} else if (locationStr == "third party") {
-				location = BusClient::ThirdParty;
-			} else {
-				MojErrThrowMsg(MojErrInvalidMsg, "unrecognized type '%s'", locationStr.data());
-			}
-
-			m_client.Unconfigure(app, type, location, types);
-		}
-
+		for (const PackageRequest& request : requests)
+			m_client.Unconfigure(request.id, request.type, request.location, request.types);
 	} catch (const std::exception& e) {
 		MojErrThrowMsg(MojErrInternal, "%s", e.what());
 	} catch (...) {
@@ -700,10 +676,11 @@ void BusClient::ScheduleShutdown()
 		m_configurators.clear();
 		Configurator::ResetConfigStats();
 
-		const PendingWork &pending = m_pending.back();
-		(void)(pending.instance->*(pending.callback))(pending.msg.get(), pending.payload);
-
+		// Taken off the list before it runs: the handler may queue more work, and a
+		// reference into the vector would not survive that.
+		PendingWork pending = std::move(m_pending.back());
 		m_pending.pop_back();
+		(void)(pending.instance->*(pending.callback))(pending.msg.get(), pending.payload);
 		return;
 	}
 

@@ -22,8 +22,11 @@
 #include "core/MojSignal.h"
 #include "CoreDefs.h"
 
+#include <set>
 #include <string>
+#include <sys/types.h>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 inline constexpr MojModeT kCacheDirPerms = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
@@ -86,15 +89,23 @@ private:
 	// configurator's directory, which names the app or service it belongs to.
 	using ConfigMap = std::unordered_map<std::string, std::string>;
 
+	// The directories a scan has been in, by device and inode, so that a symlink back up
+	// the tree does not send it round in circles.
+	using VisitedDirs = std::set<std::pair<dev_t, ino_t>>;
+
 	void InitCacheDir() const;
 	bool IsAlreadyConfigured(const std::string& confFile) const;
 	bool GetConfigFiles(const std::string& parent, const std::string& directory);
+	bool GetConfigFiles(const std::string& parent, const std::string& directory, VisitedDirs& visited);
 	std::string ReadFile(const std::string& filePath) const;
-	bool WriteStampChecksum(int stampFd, const std::string& confFile) const;
+	std::string ProcessedChecksum(const std::string& confFile) const;
 	void Complete();
 	MojErr BusResponseAsync(const std::string& filePath, MojObject& response, MojErr err, bool* cacheConfigured);
 
 	ConfigMap m_parentDirMap;
+	// Key: /full/path/to/config/file. Value: the checksum of the contents Run() read and sent
+	// for it, which is what its stamp records once the service has answered.
+	ConfigMap m_processedChecksums;
 	ConfigCollection m_configs;
 	ConfigCollection m_pendingConfigs;
 	const RunType m_currentType;

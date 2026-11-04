@@ -83,13 +83,15 @@ private:
 		explicit BusMethods(BusClient& client);
 
 	private:
-		bool WorkEnqueued(Callback callback, MojServiceMessage* msg, MojObject& payload);
+		// The signatures are MojService::CategoryHandler::Callback's: they are called
+		// through it.
+		bool WorkEnqueued(Callback callback, MojServiceMessage* msg, const MojObject& payload);
 
-		MojErr Run(MojServiceMessage* msg, MojObject& payload);
-		MojErr Rescan(MojServiceMessage* msg, MojObject& payload);
-		MojErr Scan(MojServiceMessage* msg, MojObject& payload);
-		MojErr ScanRequest(MojServiceMessage* msg, MojObject& payload, ConfigurationMode confmode);
-		MojErr Unconfigure(MojServiceMessage* msg, MojObject& payload);
+		MojErr Run(MojServiceMessage* msg, const MojObject& payload);
+		MojErr Rescan(MojServiceMessage* msg, const MojObject& payload);
+		MojErr Scan(MojServiceMessage* msg, const MojObject& payload);
+		MojErr ScanRequest(MojServiceMessage* msg, const MojObject& payload, ConfigurationMode confmode);
+		MojErr Unconfigure(MojServiceMessage* msg, const MojObject& payload);
 
 		BusClient& m_client;
 	};
@@ -100,6 +102,17 @@ private:
 		MojRefCountedPtr<MojServiceMessage> msg;
 		MojObject payload;
 	};
+
+	// One {"id", "type", "location"[, "types"]} entry of a scan, rescan or unconfigure call.
+	struct PackageRequest {
+		MojString id;
+		PackageType type;
+		PackageLocation location;
+		ScanTypes types;
+	};
+
+	static MojErr ParsePackageRequests(const MojObject& payload, bool withTypes, std::vector<PackageRequest>& requests);
+	static bool IsPackageId(const MojString& id);
 
 	using Base = MojReactorApp<MojGmainReactor>;
 	using ConfiguratorPtr = MojRefCountedPtr<Configurator>;
