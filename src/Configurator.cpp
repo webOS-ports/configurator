@@ -316,34 +316,34 @@ void Configurator::MarkConfigured(const std::string &confFile) const
     if(kConfCacheDir)
         stamp = kConfCacheDir + Replace(confFile, "/", "_");
 
-        int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
-        if (stampFd == -1) {
-            LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
-                PMLOGKS("file", confFile.c_str()),
-                PMLOGKS("error", strerror(errno)),
-                "Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
-            return;
-        }
+    int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
+    if (stampFd == -1) {
+        LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
+            PMLOGKS("file", confFile.c_str()),
+            PMLOGKS("error", strerror(errno)),
+            "Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
+        return;
+    }
 
 #ifndef EXTENSION_STARFISH
-        if (!WriteStampChecksum(stampFd, confFile))
-            LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
-                PMLOGKS("file", confFile.c_str()),
-                "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
+    if (!WriteStampChecksum(stampFd, confFile))
+        LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+            PMLOGKS("file", confFile.c_str()),
+            "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
 #endif
 
-        if (-1 == futimens(stampFd, times)) {
-            // fall through to close()
-            (void)unlink(stamp.c_str());
-            LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
-                PMLOGKS("file", confFile.c_str()),
-                PMLOGKS("error", strerror(errno)),
-                "Failed to create configured stamp for %s (timestamp change failed: %s)", confFile.c_str(), strerror(errno));
-        } else {
-            LOG_DEBUG("'%s' marked as configured (stamp '%s' created)", confFile.c_str(), stamp.c_str());
-        }
+    if (-1 == futimens(stampFd, times)) {
+        // fall through to close()
+        (void)unlink(stamp.c_str());
+        LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
+            PMLOGKS("file", confFile.c_str()),
+            PMLOGKS("error", strerror(errno)),
+            "Failed to create configured stamp for %s (timestamp change failed: %s)", confFile.c_str(), strerror(errno));
+    } else {
+        LOG_DEBUG("'%s' marked as configured (stamp '%s' created)", confFile.c_str(), stamp.c_str());
+    }
 
-        (void)close(stampFd);
+    (void)close(stampFd);
 #endif
 }
 
