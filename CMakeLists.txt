@@ -14,7 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 2.8.7)
+cmake_minimum_required(VERSION 3.10)
 
 project(configurator CXX)
 
@@ -22,7 +22,7 @@ include(webOS/webOS)
 webos_modules_init(1 0 0 QUALIFIER RC2)
 webos_component(3 0 0)
 
-webos_add_compiler_flags(ALL "-DMOJ_LINUX" --std=c++0x)
+webos_add_compiler_flags(ALL -DMOJ_LINUX -std=c++23)
 
 include_directories(src)
 
@@ -62,18 +62,27 @@ endif()
 
 find_library(PTHREAD pthread REQUIRED)
 
-file(GLOB SOURCE_FILES src/*.cpp)
-add_executable(configurator ${SOURCE_FILES} )
+# Everything but main(), so tests/ can link the same objects.
+add_library(configurator-core OBJECT
+    src/ActivityConfigurator.cpp
+    src/BusClient.cpp
+    src/Configurator.cpp
+    src/DbKindConfigurator.cpp
+    src/DbPermissionsConfigurator.cpp
+    src/FileCacheConfigurator.cpp
+    src/Log.cpp
+    src/md5sum.cpp)
+
+add_executable(configurator $<TARGET_OBJECTS:configurator-core> src/main.cpp)
 
 target_link_libraries(configurator
-                    -L.
-                    ${DB8_LDFLAGS}
-                    ${GLIB2_LDFLAGS}
-                    ${LUNASERVICE_LDFLAGS}
-		    ${OPENSSL_LDFLAGS}
-                    ${PTHREAD}
-                    ${PMLOG_LDFLAGS}
-                   )
+    ${DB8_LDFLAGS}
+    ${GLIB2_LDFLAGS}
+    ${LUNASERVICE_LDFLAGS}
+    ${OPENSSL_LDFLAGS}
+    ${PTHREAD}
+    ${PMLOG_LDFLAGS}
+)
 
 webos_configure_header_files(src)
 webos_build_daemon(NAME configurator LAUNCH files/launch)
