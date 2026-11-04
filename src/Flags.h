@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2019 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,142 +18,42 @@
 #ifndef FLAGS_H
 #define FLAGS_H
 
+#include <type_traits>
+
+// A set of values of one enum, combined with | and tested with &.
 template <class Enum>
 class Flags {
 public:
-	typedef Enum enum_type;
+	using enum_type = Enum;
+	using value_type = std::make_unsigned_t<std::underlying_type_t<Enum>>;
 
-	Flags(const Flags& other)
-		: m_flags(other.m_flags)
-	{
-	}
+	constexpr Flags() = default;
+	constexpr Flags(Enum flag) : m_flags(static_cast<value_type>(flag)) {}
 
-	Flags(Enum flag)
-		: m_flags(flag)
-	{
-	}
+	constexpr explicit operator bool() const { return m_flags != 0; }
+	constexpr bool operator!() const { return m_flags == 0; }
 
-	Flags()
-		: m_flags(0)
-	{
-	}
+	constexpr Flags operator&(Flags mask) const { return Flags(m_flags & mask.m_flags); }
+	constexpr Flags operator|(Flags other) const { return Flags(m_flags | other.m_flags); }
+	constexpr Flags operator^(Flags other) const { return Flags(m_flags ^ other.m_flags); }
 
-	~Flags()
-	{
-	}
+	constexpr Flags& operator&=(Flags mask) { m_flags &= mask.m_flags; return *this; }
+	constexpr Flags& operator|=(Flags other) { m_flags |= other.m_flags; return *this; }
+	constexpr Flags& operator^=(Flags other) { m_flags ^= other.m_flags; return *this; }
 
-	operator int() const
-	{
-		return (int)m_flags;
-	}
-
-	bool operator!() const
-	{
-		return !m_flags;
-	}
-
-	Flags& operator=(const Flags& other)
-	{
-		if (this != &other)
-		{
-			m_flags = other.m_flags;
-		}
-		return *this;
-	}
-
-	Flags& operator=(const Flags&& other)
-	{
-		m_flags = std::move(other.m_flags);
-		return *this;
-	}
-	Flags& operator=(Flags&& other)
-	{
-		m_flags = std::move(other.m_flags);
-		return *this;
-	}
-	Flags operator&(Enum mask) const
-	{
-		return Flags(m_flags & mask);
-	}
-
-	Flags operator&(Flags mask) const
-	{
-		return Flags(m_flags & mask.m_flags);
-	}
-
-	Flags& operator&=(Enum mask)
-	{
-		m_flags &= mask;
-		return *this;
-	}
-
-	Flags& operator&=(Flags mask)
-	{
-		m_flags &= mask.m_flags;
-		return *this;
-	}
-
-	Flags operator^(Enum other) const
-	{
-		return Flags(m_flags ^ other);
-	}
-
-	Flags operator^(Flags other) const
-	{
-		return Flags(m_flags ^ other);
-	}
-
-	Flags& operator^=(Enum other)
-	{
-		m_flags ^= other;
-		return *this;
-	}
-
-	Flags& operator^=(const Flags& other)
-	{
-		m_flags ^= other.m_flags;
-		return *this;
-	}
-
-	Flags operator|(Enum other) const
-	{
-		return Flags(m_flags | other);
-	}
-
-	Flags operator|(Flags other) const
-	{
-		return Flags(m_flags | other.m_flags);
-	}
-
-	Flags& operator|=(Enum other)
-	{
-		m_flags |= other;
-		return *this;
-	}
-
-	Flags& operator|=(Flags other)
-	{
-		m_flags |= other.m_flags;
-		return *this;
-	}
+	constexpr bool operator==(const Flags&) const = default;
 
 private:
-	Flags(unsigned int flags)
-		: m_flags(flags)
-	{
-	}
+	constexpr explicit Flags(value_type flags) : m_flags(flags) {}
 
-	unsigned int m_flags;
+	value_type m_flags = 0;
 };
 
-#define DECLARE_FLAGS(Name, Enum) typedef Flags<Enum> Name
+#define DECLARE_FLAGS(Name, Enum) using Name = Flags<Enum>
 
+// Lets two values of the enum, or a value and a set, be combined with |.
 #define DECLARE_OPERATORS_FOR_FLAGS(Name) \
-inline Flags<Name::enum_type> operator|(Name::enum_type e1, Name::enum_type e2) \
-{ return Flags<Name::enum_type>(e1) | e2; }\
-inline Flags<Name::enum_type> operator|(Name::enum_type e1, Flags<Name::enum_type> f2) \
-{ return f2 | e1; } \
-inline Name::enum_type operator~(Name::enum_type e1) \
-{ return ((Name::enum_type)~e1); }
+constexpr Name operator|(Name::enum_type e1, Name::enum_type e2) { return Name(e1) | e2; } \
+constexpr Name operator|(Name::enum_type e1, Name f2) { return f2 | e1; }
 
 #endif // FLAGS_H

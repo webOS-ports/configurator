@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,57 +17,59 @@
 
 #include "BusClient.h"
 #include "Configurator.h"
-#include "dirent.h"
-#include <fstream>
-#include <streambuf>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <utime.h>
+
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
+#include <fstream>
 #include <glib.h>
+#include <iterator>
+#include <sys/stat.h>
+#include <unistd.h>
 
-using namespace std;
+namespace {
 
-static std::string Replace(std::string input, const std::string& substr, const std::string& replacement)
+// Where the stamp for a configuration file lives: its path, with each '/' made a '_', in the
+// stamp cache.
+std::string StampPath(const std::string& confFile)
 {
-	size_t i;
-	size_t l;
-
-	i = input.find(substr);
-	l = substr.length();
-	while (i != string::npos) {
-		(void)input.replace(i, l, replacement);
-		i = input.find(substr, i + l);
-	}
-
-	return input;
+	std::string name = confFile;
+	std::ranges::replace(name, '/', '_');
+	return kConfCacheDir + name;
 }
 
+// What a stamp records: the SHA-256 of a configuration's contents, in hex.
+std::string ContentChecksum(const std::string& contents)
+{
+	gchar* sum = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+			reinterpret_cast<const guchar*>(contents.data()), contents.size());
+	std::string out(sum ? sum : "");
+	g_free(sum);
+	return out;
+}
+
+} // namespace
 
 ConfiguratorCallback::ConfiguratorCallback(Configurator* configurator, const std::string& filePath)
 	: m_slot(this, &ConfiguratorCallback::ResponseWrapper),
 	  m_config(filePath),
-	  m_handler(configurator),
-	  m_delegateInvoked(false),
-	  m_unconfigure(false),
-	  m_configure(false),
-      m_defaultCacheBehaviourUsed(false)
+	  m_handler(configurator)
 {
-	assert(m_handler.get() != NULL);
+	assert(m_handler.get() != nullptr);
 }
 
-ConfiguratorCallback::~ConfiguratorCallback()
-{
-}
+ConfiguratorCallback::~ConfiguratorCallback() = default;
 
 MojErr ConfiguratorCallback::DelegateResponse(MojObject& response, MojErr err)
 {
-        if (m_delegateInvoked)
-            return MojErrAccessDenied;
-        m_delegateInvoked = true;
-        m_defaultCacheBehaviourUsed = false;
+	if (m_delegateInvoked)
+		return MojErrAccessDenied;
+	m_delegateInvoked = true;
+	m_defaultCacheBehaviourUsed = false;
 
-        return m_handler->BusResponseAsync(m_config, response, err, &m_defaultCacheBehaviourUsed);
+	return m_handler->BusResponseAsync(m_config, response, err, &m_defaultCacheBehaviourUsed);
 }
 
 void ConfiguratorCallback::MarkConfigured()
@@ -81,44 +84,34 @@ void ConfiguratorCallback::UnmarkConfigured()
 	m_unconfigure = true;
 }
 
-MojErr ConfiguratorCallback::ResponseWrapper(MojObject &response, MojErr err)
+MojErr ConfiguratorCallback::ResponseWrapper(MojObject& response, MojErr err)
 {
-        MojErr result = MojErrNone;
-        try {
-            m_slot.cancel();
-            result = Response(response, err);
-        }  catch (const std::exception& e){
-            MojErrThrowMsg(MojErrInternal, "%s", e.what());
-        } catch (...) {
-            MojErrThrowMsg(MojErrInternal, "Uncaught exception in Configurator::BusResponse!");
-        }
+	MojErr result = MojErrNone;
+	try {
+		m_slot.cancel();
+		result = Response(response, err);
+	} catch (const std::exception& e) {
+		MojErrThrowMsg(MojErrInternal, "%s", e.what());
+	} catch (...) {
+		MojErrThrowMsg(MojErrInternal, "Uncaught exception in Configurator::BusResponse!");
+	}
 
-        if (!m_delegateInvoked)
-            result = DelegateResponse(response, result == MojErrNone ? err : result);
+	if (!m_delegateInvoked)
+		result = DelegateResponse(response, result == MojErrNone ? err : result);
 
-        if (!m_defaultCacheBehaviourUsed) {
-            if (m_unconfigure) {
-                LOG_DEBUG("Unmarking %s as configured", m_config.c_str());
-                m_handler->UnmarkConfigured(m_config);
-
-             } else if (m_configure) {
-                 LOG_DEBUG("Marking %s as configured", m_config.c_str());
-                 m_handler->MarkConfigured(m_config);
-             }
-        }
-        return result;
+	if (!m_defaultCacheBehaviourUsed) {
+		if (m_unconfigure) {
+			LOG_DEBUG("Unmarking %s as configured", m_config.c_str());
+			m_handler->UnmarkConfigured(m_config);
+		} else if (m_configure) {
+			LOG_DEBUG("Marking %s as configured", m_config.c_str());
+			m_handler->MarkConfigured(m_config);
+		}
+	}
+	return result;
 }
 
-DefaultConfiguratorCallback::DefaultConfiguratorCallback(Configurator *configurator, const std::string &filePath)
-	: ConfiguratorCallback(configurator, filePath)
-{
-}
-
-DefaultConfiguratorCallback::~DefaultConfiguratorCallback()
-{
-}
-
-MojErr DefaultConfiguratorCallback::Response(MojObject &response, MojErr err)
+MojErr DefaultConfiguratorCallback::Response(MojObject&, MojErr)
 {
 	// no action - do the default response
 	return MojErrNone;
@@ -143,25 +136,22 @@ const Configurator::ConfigCollection& Configurator::ConfigureFailure()
 	return m_configureFailed;
 }
 
-Configurator::Configurator(const string& id, ConfigType confType, RunType type, BusClient& busClient, const string& configDirectory)
-: m_busClient(busClient),
-  m_id(id),
-	m_confType(confType),
-  m_currentType(type),
-  m_completed(false),
-	m_configDir(configDirectory),
-	m_scanned(false),
-    m_emptyConfigurator(false)
+Configurator::Configurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory)
+	: m_busClient(busClient),
+	  m_id(id),
+	  m_confType(confType),
+	  m_currentType(type),
+	  m_configDir(configDirectory)
 {
 	InitCacheDir();
 }
 
 Configurator::~Configurator()
 {
-	LOG_DEBUG("Destroying configurator %p", this);
+	LOG_DEBUG("Destroying configurator %p", static_cast<void*>(this));
 }
 
-ConfiguratorCallback* Configurator::CreateCallback(const std::string &filePath)
+ConfiguratorCallback* Configurator::CreateCallback(const std::string& filePath)
 {
 	return new DefaultConfiguratorCallback(this, filePath);
 }
@@ -172,199 +162,121 @@ void Configurator::InitCacheDir() const
 	MojMkDir(kConfCacheDir, kCacheStampPerm);
 }
 
-// What a stamp records: the SHA-256 of a configuration's contents, in hex.
-static std::string ContentChecksum(const std::string& contents)
-{
-    gchar* sum = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
-            reinterpret_cast<const guchar*>(contents.data()), contents.size());
-    std::string out(sum ? sum : "");
-    g_free(sum);
-    return out;
-}
-
 // Write the checksum of confFile into an open stamp. A stamp left without one only makes the
 // file configure again next time.
 bool Configurator::WriteStampChecksum(int stampFd, const std::string& confFile) const
 {
-    const std::string sum = ContentChecksum(ReadFile(confFile));
-    if (sum.empty())
-        return false;
-    const ssize_t written = write(stampFd, sum.data(), sum.size());
-    return written >= 0 && static_cast<size_t>(written) == sum.size();
+	const std::string sum = ContentChecksum(ReadFile(confFile));
+	if (sum.empty())
+		return false;
+	const ssize_t written = write(stampFd, sum.data(), sum.size());
+	return written >= 0 && static_cast<size_t>(written) == sum.size();
 }
 
 bool Configurator::IsAlreadyConfigured(const std::string& confFile) const
 {
-        if (!this->CanCacheConfiguratorStatus(confFile)) {
-            LOG_DEBUG("Configurator ignores caching - returning false");
-            return false;
-        }
+	if (!CanCacheConfiguratorStatus(confFile)) {
+		LOG_DEBUG("Configurator ignores caching - returning false");
+		return false;
+	}
 
-    // A file counts as configured while its contents are what the stamp records. Comparing
-    // mtimes is not enough: a reproducible image gives every file the same mtime, so a file an
-    // update changed never looked newer than its stamp and was skipped for good. A stamp that
-    // records no checksum (one from before this check) matches nothing, so its file is
-    // configured once more.
-    std::string stamp("");
-    MojStatT confInfo;
-    if(kConfCacheDir)
-        stamp = kConfCacheDir + Replace(confFile, "/", "_");
+	// A file counts as configured while its contents are what the stamp records. Comparing
+	// mtimes is not enough: a reproducible image gives every file the same mtime, so a file an
+	// update changed never looked newer than its stamp and was skipped for good. A stamp that
+	// records no checksum (one from before this check) matches nothing, so its file is
+	// configured once more.
+	const std::string stamp = StampPath(confFile);
+	MojStatT confInfo;
+	if (MojErrNone != MojStat(confFile.c_str(), &confInfo))
+		return false;
 
-    if (MojErrNone != MojStat(confFile.c_str(), &confInfo))
-        return false;
+	const std::string recorded = ReadFile(stamp);
+	if (recorded.empty())
+		return false;
 
-    const std::string recorded = ReadFile(stamp);
-    if (recorded.empty())
-        return false;
-
-    LOG_DEBUG("%s may already be configured - %s exists", confFile.c_str(), stamp.c_str());
-    return recorded == ContentChecksum(ReadFile(confFile));
+	LOG_DEBUG("%s may already be configured - %s exists", confFile.c_str(), stamp.c_str());
+	return recorded == ContentChecksum(ReadFile(confFile));
 }
 
-void Configurator::MarkConfigured(const std::string &confFile) const
+void Configurator::MarkConfigured(const std::string& confFile) const
 {
-       if (!CanCacheConfiguratorStatus(confFile))
-           return;
+	if (!CanCacheConfiguratorStatus(confFile))
+		return;
 
-        LOG_DEBUG("Attempting to mark '%s' as configured", confFile.c_str());
+	LOG_DEBUG("Attempting to mark '%s' as configured", confFile.c_str());
 
-        MojStatT confFileInfo;
-        MojErr err;
+	MojStatT confFileInfo;
+	const MojErr err = MojStat(confFile.c_str(), &confFileInfo);
 
-        err = MojStat(confFile.c_str(), &confFileInfo);
+	// The stamp gets the file's mtime plus a second; atime is "now", as Linux does not
+	// honour UTIME_OMIT here.
+	struct timespec inherited[2];
+	struct timespec* times = nullptr;
+	if (err == MojErrNone) {
+		inherited[0].tv_nsec = UTIME_NOW;
+		inherited[0].tv_sec = 0;
+		inherited[1].tv_nsec = confFileInfo.st_mtim.tv_nsec;
+		inherited[1].tv_sec = confFileInfo.st_mtim.tv_sec + 1;
+		times = inherited;
+	} else {
+		LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+			PMLOGKS("error", strerror(errno)),
+			"Using current time as timestamp - couldn't get timestamp of conf file (%s)", strerror(errno));
+	}
 
-#ifndef UTIME_NOW
-    /*
-        If we don't have futimens() then use futimes with msec resolution. Also the
-        last-access time will be set to 0 instead of "now".
-    */
-    struct timeval *times;
-    struct timeval inherited[2];
+	const std::string stamp = StampPath(confFile);
+	const int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
+	if (stampFd == -1) {
+		LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
+			PMLOGKS("file", confFile.c_str()),
+			PMLOGKS("error", strerror(errno)),
+			"Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
+		return;
+	}
 
-    if (err == MojErrNone) {
-    inherited[0].tv_usec = 0; // don't care about atime
-    inherited[0].tv_sec = 0;
-    inherited[1].tv_usec = confFileInfo.st_mtim.tv_nsec / 1000;
-    inherited[1].tv_sec = confFileInfo.st_mtim.tv_sec + 1;
+	if (!WriteStampChecksum(stampFd, confFile))
+		LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
+			PMLOGKS("file", confFile.c_str()),
+			"Could not record the checksum of %s; it is configured again next time", confFile.c_str());
 
-    times = inherited;
+	if (-1 == futimens(stampFd, times)) {
+		(void)unlink(stamp.c_str());
+		LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
+			PMLOGKS("file", confFile.c_str()),
+			PMLOGKS("error", strerror(errno)),
+			"Failed to create configured stamp for %s (timestamp change failed: %s)", confFile.c_str(), strerror(errno));
+	} else {
+		LOG_DEBUG("'%s' marked as configured (stamp '%s' created)", confFile.c_str(), stamp.c_str());
+	}
 
-//    MojLogDebug(m_log, "Inheriting timestamp of %d s, %d ms", (int)inherited[1].tv_sec, (int)inherited[1].tv_msec);
-    } else {
-    LOG_WARNING(MSG_CONFIGURATOR_WARNING, 1,
-        PMLOGKS("error", strerror(errno)),
-        "Using current time as timestamp - couldn't get timestamp of conf file (%s)", strerror(errno));
-    times = NULL;
-    }
-
-    string stamp = kConfCacheDir + Replace(confFile, "/", "_");
-
-    int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
-    if (stampFd == -1) {
-        MojLogError(m_log, "Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
-        return;
-    }
-
-    if (!WriteStampChecksum(stampFd, confFile))
-        LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
-            PMLOGKS("file", confFile.c_str()),
-            "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
-
-    if (-1 == futimes(stampFd, times)) {
-        // fall through to close()
-        unlink(stamp.c_str());
-        LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
-            PMLOGKS("file", confFile.c_str())),
-            PMLOGKS("error", strerror(errno)),
-            "Failed to create configured stamp for %s (timestamp change failed: %s)", confFile.c_str(), strerror(errno));
-        } else {
-            LOG_DEBUG("'%s' marked as configured (stamp '%s' created)", confFile.c_str(), stamp.c_str());
-        }
-
-#else
-    struct timespec *times;
-    struct timespec inherited[2];
-
-    if (err == MojErrNone) {
-        inherited[0].tv_nsec = UTIME_NOW; // don't care about atime - linux bug prevents me from using UTIME_OMIT
-        inherited[0].tv_sec = 0; // linux bug
-        inherited[1].tv_nsec = confFileInfo.st_mtim.tv_nsec;
-        inherited[1].tv_sec = confFileInfo.st_mtim.tv_sec + 1;
-
-        times = inherited;
-
-//    MojLogDebug(m_log, "Inheriting timestamp of %d s, %d ns", (int)inherited[1].tv_sec, (int)inherited[1].tv_nsec);
-    } else {
-        LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
-            PMLOGKS("error", strerror(errno)),
-            "Using current time as timestamp - couldn't get timestamp of conf file (%s)", strerror(errno));
-        times = NULL;
-    }
-
-    std::string stamp("");
-    if(kConfCacheDir)
-        stamp = kConfCacheDir + Replace(confFile, "/", "_");
-
-    int stampFd = open(stamp.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOATIME, kCacheStampPerm);
-    if (stampFd == -1) {
-        LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
-            PMLOGKS("file", confFile.c_str()),
-            PMLOGKS("error", strerror(errno)),
-            "Failed to mark %s as configured: %s", confFile.c_str(), strerror(errno));
-        return;
-    }
-
-    if (!WriteStampChecksum(stampFd, confFile))
-        LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
-            PMLOGKS("file", confFile.c_str()),
-            "Could not record the checksum of %s; it is configured again next time", confFile.c_str());
-
-    if (-1 == futimens(stampFd, times)) {
-        // fall through to close()
-        (void)unlink(stamp.c_str());
-        LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
-            PMLOGKS("file", confFile.c_str()),
-            PMLOGKS("error", strerror(errno)),
-            "Failed to create configured stamp for %s (timestamp change failed: %s)", confFile.c_str(), strerror(errno));
-    } else {
-        LOG_DEBUG("'%s' marked as configured (stamp '%s' created)", confFile.c_str(), stamp.c_str());
-    }
-
-    (void)close(stampFd);
-#endif
+	(void)close(stampFd);
 }
 
-void Configurator::UnmarkConfigured(const std::string &confFile) const
+void Configurator::UnmarkConfigured(const std::string& confFile) const
 {
-    if (!CanCacheConfiguratorStatus(confFile))
-        return;
+	if (!CanCacheConfiguratorStatus(confFile))
+		return;
 
-    string stamp("");
-    if(kConfCacheDir)
-        stamp = kConfCacheDir + Replace(confFile, "/", "_");
-
-    if (unlink(stamp.c_str()) == 0)
-    {
-        LOG_DEBUG("removed configured stamp for '%s'", confFile.c_str());
-    }
-    else
-    {
-        LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 2,
-            PMLOGKS("file", confFile.c_str()),
-            PMLOGKS("stamp", stamp.c_str()),
-            "failed to remove configured stamp for '%s' ('%s')", confFile.c_str(), stamp.c_str());
-    }
+	const std::string stamp = StampPath(confFile);
+	if (unlink(stamp.c_str()) == 0) {
+		LOG_DEBUG("removed configured stamp for '%s'", confFile.c_str());
+	} else {
+		LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 2,
+			PMLOGKS("file", confFile.c_str()),
+			PMLOGKS("stamp", stamp.c_str()),
+			"failed to remove configured stamp for '%s' ('%s')", confFile.c_str(), stamp.c_str());
+	}
 }
 
 const std::string& Configurator::ParentId(const std::string& filePath) const
 {
-	ConfigMap::const_iterator i = m_parentDirMap.find(filePath);
+	const auto i = m_parentDirMap.find(filePath);
 	if (i == m_parentDirMap.end() || i->second.empty())
 		return m_id;
 	return i->second;
 }
 
-bool Configurator::CanCacheConfiguratorStatus(const std::string &) const
+bool Configurator::CanCacheConfiguratorStatus(const std::string&) const
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 	return true;
@@ -375,22 +287,17 @@ bool Configurator::Run()
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	if (!m_scanned) {
-        bool folderFound = GetConfigFiles("", m_configDir);
-		if (m_configs.empty()) {
-            if (folderFound) // Prevents double logging when folder is missing
-                LOG_DEBUG("No configurations found in %s", m_configDir.c_str());
-			m_emptyConfigurator = true;
-		} else {
-			m_emptyConfigurator = false;
-		}
+		const bool folderFound = GetConfigFiles("", m_configDir);
+		if (m_configs.empty() && folderFound) // a missing folder has been logged already
+			LOG_DEBUG("No configurations found in %s", m_configDir.c_str());
+		m_emptyConfigurator = m_configs.empty();
 		m_scanned = true;
 	}
 
 	if (m_configs.empty()) {
 		if (m_pendingConfigs.empty() && !m_completed) {
-			if (!m_emptyConfigurator) {
+			if (!m_emptyConfigurator)
 				LOG_DEBUG("%s :: No more configurations", ConfiguratorName());
-			}
 			Complete();
 		} else {
 			LOG_DEBUG("%s :: %zu configurations pending, m_completed = %d", ConfiguratorName(), m_pendingConfigs.size(), m_completed);
@@ -399,15 +306,14 @@ bool Configurator::Run()
 		// just waiting for responses from services
 		return m_configs.empty();
 	}
-	// Read the config file
-	string filePath = m_configs.back();
+
+	const std::string filePath = m_configs.back();
 	m_configs.pop_back();
 	m_pendingConfigs.push_back(filePath);
-	string config = ReadFile(filePath);
+	const std::string config = ReadFile(filePath);
 
 	LOG_DEBUG("%s :: Configuring '%s'", ConfiguratorName(), filePath.c_str());
 
-	// process it
 	MojErr err = MojErrNone;
 	switch (m_currentType) {
 	case Configure:
@@ -423,16 +329,14 @@ bool Configurator::Run()
 		if (MojErrInProgress == err) {
 			m_configureOk.push_back(config);
 			LOG_DEBUG("Skipping config file: %s", filePath.c_str());
-		}
-		else
-		{
+		} else {
 			MojString errorMsg;
 			MojErrToString(err, errorMsg);
 			LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 2,
 					PMLOGKS("config", config.c_str()),
 					PMLOGKS("error", errorMsg.data()),
 					"Failed to process config: %s (error: %s)", config.c_str(), errorMsg.data());
-                        // Skip this file and keep going!
+			// Skip this file and keep going!
 			m_configureFailed.push_back(filePath);
 		}
 		m_pendingConfigs.pop_back();
@@ -441,7 +345,7 @@ bool Configurator::Run()
 	return m_configs.empty();
 }
 
-MojErr Configurator::ProcessConfig(const std::string &filePath, const std::string &json)
+MojErr Configurator::ProcessConfig(const std::string& filePath, const std::string& json)
 {
 	MojObject parsed;
 	MojErr err = parsed.fromJson(json.c_str());
@@ -450,7 +354,7 @@ MojErr Configurator::ProcessConfig(const std::string &filePath, const std::strin
 	return ProcessConfig(filePath, parsed);
 }
 
-MojErr Configurator::ProcessConfigRemoval(const std::string &filePath, const std::string &json)
+MojErr Configurator::ProcessConfigRemoval(const std::string& filePath, const std::string& json)
 {
 	MojObject parsed;
 	MojErr err = parsed.fromJson(json.c_str());
@@ -459,82 +363,62 @@ MojErr Configurator::ProcessConfigRemoval(const std::string &filePath, const std
 	return ProcessConfigRemoval(filePath, parsed);
 }
 
-// returns whether folder exists or not
-bool Configurator::GetConfigFiles(const string& parent, const string& directory)
+// returns whether the folder exists
+bool Configurator::GetConfigFiles(const std::string& parent, const std::string& directory)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	DIR* dp = NULL;
-	struct dirent* dirp = NULL;
-	struct stat stat_buf;
-
-	if((dp  = opendir(directory.c_str())) == NULL) {
+	DIR* dp = opendir(directory.c_str());
+	if (dp == nullptr) {
 		LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 2,
 				PMLOGKS("directory", directory.c_str()),
 				PMLOGKS("parent", parent.c_str()),
 				"Failed to open directory: %s, under %s", directory.c_str(), parent.c_str());
-        return false;
+		return false;
 	}
 
-    LOG_DEBUG("Reading config files in '%s' under '%s'", directory.c_str(), parent.c_str());
+	LOG_DEBUG("Reading config files in '%s' under '%s'", directory.c_str(), parent.c_str());
 
-    while ((dirp = readdir(dp)) != NULL) {
-		string filename = dirp->d_name;
-		if (filename != "." && filename != "..") {
-			string filePath = directory;
-			(void)filePath.append("/");
-			(void)filePath.append(filename);
-			if(0 == stat(filePath.c_str(), &stat_buf)) {
-				if (S_ISDIR(stat_buf.st_mode)) {
-					(void)GetConfigFiles(filename, filePath);
-				} else {
-					if (! parent.empty())
-						m_parentDirMap[filePath] = parent;
-					bool isAlreadyConfiguredBool = IsAlreadyConfigured(filePath);
-					// Check if the config file has already been processed
-					if (!(m_currentType == Configure && isAlreadyConfiguredBool)) {
-						LOG_DEBUG("Found configuration '%s'", filePath.c_str());
-						m_configs.push_back(filePath);
-					} else {
-						LOG_DEBUG("Skipping configuration '%s' because it has already run (cache stamp in %s exists)", filePath.c_str(), kConfCacheDir);
-					}
-				}
-			}
-			else {
-				LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 0, "Failed to get file information on: %s", filename.c_str());
-				break;
-			}
+	while (const struct dirent* dirp = readdir(dp)) {
+		const std::string filename = dirp->d_name;
+		if (filename == "." || filename == "..")
+			continue;
+
+		const std::string filePath = directory + "/" + filename;
+		struct stat statBuf;
+		if (stat(filePath.c_str(), &statBuf) != 0) {
+			LOG_ERROR(MSGID_CONFIGURATOR_ERROR, 0, "Failed to get file information on: %s", filename.c_str());
+			break;
+		}
+
+		if (S_ISDIR(statBuf.st_mode)) {
+			(void)GetConfigFiles(filename, filePath);
+			continue;
+		}
+
+		if (!parent.empty())
+			m_parentDirMap[filePath] = parent;
+		if (m_currentType == Configure && IsAlreadyConfigured(filePath)) {
+			LOG_DEBUG("Skipping configuration '%s' because it has already run (cache stamp in %s exists)", filePath.c_str(), kConfCacheDir);
+		} else {
+			LOG_DEBUG("Found configuration '%s'", filePath.c_str());
+			m_configs.push_back(filePath);
 		}
 	}
 	(void)closedir(dp);
-    return true;
+	return true;
 }
 
-const string Configurator::ReadFile(const string& filePath) const
+std::string Configurator::ReadFile(const std::string& filePath) const
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	string contents;
-	ifstream file;
-	file.open(filePath.c_str());
-
+	std::ifstream file(filePath, std::ios::binary);
 	if (!file.good())
-		return contents;
+		return {};
 
-	try {
-		(void)file.seekg(0, ios::end);
-		contents.reserve(file.tellg());
-		(void)file.seekg(0, ios::beg);
-	} catch (...) {
-	}
-
-	(void)contents.assign((istreambuf_iterator<char>(file)),
-                     istreambuf_iterator<char>());
-
-	file.close();
-	return contents;
+	return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
 }
-
 
 void Configurator::Complete()
 {
@@ -542,13 +426,13 @@ void Configurator::Complete()
 	m_completed = true;
 }
 
-MojErr Configurator::BusResponseAsync(const std::string& config, MojObject& response, MojErr err, bool *cacheConfigured)
+MojErr Configurator::BusResponseAsync(const std::string& config, MojObject& response, MojErr err, bool* cacheConfigured)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	try {
 		// remove the config from the list
-		ConfigCollection::iterator i = find(m_pendingConfigs.begin(), m_pendingConfigs.end(), config);
+		const auto i = std::ranges::find(m_pendingConfigs, config);
 		if (i == m_pendingConfigs.end()) {
 			LOG_WARNING(MSGID_CONFIGURATOR_WARNING, 1,
 					PMLOGKS("for", config.c_str()),
@@ -582,7 +466,7 @@ MojErr Configurator::BusResponseAsync(const std::string& config, MojObject& resp
 
 		// do the next config
 		(void)Run();
-	} catch (const std::exception& e){
+	} catch (const std::exception& e) {
 		MojErrThrowMsg(MojErrInternal, "%s", e.what());
 	} catch (...) {
 		MojErrThrowMsg(MojErrInternal, "Uncaught exception in Configurator::BusResponse!");

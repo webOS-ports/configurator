@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,40 +31,13 @@
 */
 
 #include "BusClient.h"
-#include "db/MojDbServiceDefs.h"
 #include "core/MojServiceMessage.h"
 #include "ActivityConfigurator.h"
 #include "DbKindConfigurator.h"
 #include "DbPermissionsConfigurator.h"
 #include "FileCacheConfigurator.h"
 
-#include <algorithm>
-
-using namespace std;
-
-const char* const BusClient::SERVICE_NAME                = "com.palm.configurator";
-const char* const BusClient::ROOT_BASE_DIR               = "/etc/palm/";
-const char* const BusClient::OLD_DB_KIND_DIR             = "db_kinds";	// deprecated
-const char* const BusClient::DB_KIND_DIR                 = "db/kinds";
-const char* const BusClient::DB_PERMISSIONS_DIR          = "db/permissions";
-const char* const BusClient::MEDIADB_KIND_DIR            = "mediadb/kinds";
-const char* const BusClient::MEDIADB_PERMISSIONS_DIR     = "mediadb/permissions";
-const char* const BusClient::TEMPDB_KIND_DIR             = "tempdb/kinds";
-const char* const BusClient::TEMPDB_PERMISSIONS_DIR      = "tempdb/permissions";
-const char* const BusClient::FILE_CACHE_CONFIG_DIR       = "filecache_types";
-const char* const BusClient::ACTIVITY_CONFIG_DIR         = "activities";
-const char* const BusClient::FIRST_BOOT_FILE             = "/var/luna/preferences/ran-configurator";
-const char* const BusClient::BASE_CRYPTOFS               = "/media/cryptofs/apps/";
-const char* const BusClient::BASE_ROOT                   = "/";
-const char* const BusClient::BASE_PALM_OFFSET            = "usr/palm/";
-const char* const BusClient::APPS_DIR                    = "applications/";
-const char* const BusClient::SERVICES_DIR                = "services/";
-const char* const BusClient::CONF_SUBDIR                 = "/configuration/";
-
-static inline bool startsWith(const char *str, const std::string& prefix)
-{
-	return 0 == strncmp(str, prefix.c_str(), prefix.length());
-}
+#include <unistd.h>
 
 BusClient::BusMethods::BusMethods(BusClient& client)
 : m_client(client)
@@ -87,15 +61,15 @@ BusClient::BusMethods::BusMethods(BusClient& client)
 		LOG_CRITICAL(MSGID_BUS_CLIENT_ERROR, 0, "failed to register unconfigure method: %i", err);
 }
 
-static MojErr getTypes(MojObject typesArray, BusClient::ScanTypes &bitmask)
+static MojErr getTypes(const MojObject& typesArray, BusClient::ScanTypes& bitmask)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
 	MojObject::ConstArrayIterator it = typesArray.arrayBegin();
-	if (it == NULL)
+	if (it == nullptr)
 		MojErrThrowMsg(MojErrInvalidMsg, "'types' not an array");
 
-	for (MojObject::ConstArrayIterator ni = typesArray.arrayEnd(); it != ni; it++) {
+	for (MojObject::ConstArrayIterator ni = typesArray.arrayEnd(); it != ni; ++it) {
 		const MojObject& element = *it;
 		MojString type;
 		MojErr err;
@@ -177,7 +151,7 @@ bool BusClient::BusMethods::WorkEnqueued(Callback callback, MojServiceMessage *m
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	if (m_client.m_msg.get() == NULL)
+	if (m_client.m_msg.get() == nullptr)
 		return false;
 
 	BusClient::PendingWork pending;
@@ -278,7 +252,7 @@ MojErr BusClient::BusMethods::ScanRequest(MojServiceMessage* msg, MojObject& pay
 
 		m_client.m_msg.reset(msg);
 
-		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); it++) {
+		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); ++it) {
 			const MojObject& request = *it;
 			MojString locationStr;
 			MojString typeStr;
@@ -367,7 +341,7 @@ MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage *msg, MojObject &pay
 
 		m_client.m_msg.reset(msg);
 
-		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); it++) {
+		for (MojObject::ConstArrayIterator it = payload.arrayBegin(); it != payload.arrayEnd(); ++it) {
 			const MojObject& request = *it;
 			MojString locationStr;
 			MojString typeStr;
@@ -421,26 +395,9 @@ MojErr BusClient::BusMethods::Unconfigure(MojServiceMessage *msg, MojObject &pay
 	return MojErrNone;
 }
 
-BusClient::BusClient()
-: m_dbClient(&m_service),
-  m_mediaDbClient(&m_service, MojDbServiceDefs::MediaServiceName),
-  m_tempDbClient(&m_service, MojDbServiceDefs::TempServiceName),
-  m_configuratorsCompleted(0),
-  m_launchedAsService(false),
-  m_shuttingDown(false),
-  m_wrongAplication(false),
-  m_timerTimeout(0)
-{
-}
+BusClient::BusClient() = default;
 
-BusClient::~BusClient()
-{
-}
-
-MojDbClient& BusClient::GetDbClient()
-{
-	return m_dbClient;
-}
+BusClient::~BusClient() = default;
 
 MojRefCountedPtr<MojServiceRequest> BusClient::CreateRequest()
 {
@@ -485,7 +442,7 @@ MojErr BusClient::open()
 
 		err = m_service.addCategory(MojLunaService::DefaultCategory, m_methods.get());
 	}
-	LOG_DEBUG("bus client %p", this);
+	LOG_DEBUG("bus client %p", static_cast<void*>(this));
 
 	return MojErrNone;
 }
@@ -495,7 +452,7 @@ MojErr BusClient::handleArgs(const StringVec& args)
 	MojErr err = Base::handleArgs(args);
 	MojErrCheck(err);
 
-	if (args.size() && args[0] == "service")
+	if (!args.empty() && args[0] == "service")
 		m_launchedAsService = true;
 
 	return MojErrNone;
@@ -558,29 +515,29 @@ void BusClient::ScanDir(const MojString& _id, Configurator::RunType scanType, co
 			LOG_WARNING(MSGID_BUS_CLIENT_ERROR, 1,
 					PMLOGKS("directory", baseDir.c_str()),
 					"Scanning deprecated mojodb config directory under %s", baseDir.c_str());
-			ConfiguratorPtr oldDbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, m_dbClient, baseDir + OLD_DB_KIND_DIR));
+			ConfiguratorPtr oldDbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, baseDir + OLD_DB_KIND_DIR));
 			m_configurators.push_back(oldDbKindConfigurator);
 		}
 
-		ConfiguratorPtr dbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, m_dbClient, baseDir + DB_KIND_DIR));
+		ConfiguratorPtr dbKindConfigurator(new DbKindConfigurator(id, configType, scanType, *this, baseDir + DB_KIND_DIR));
 		m_configurators.push_back(dbKindConfigurator);
 
-        ConfiguratorPtr mediaDbKindConfigurator(new MediaDbKindConfigurator(id, configType, scanType, *this, m_mediaDbClient, baseDir + MEDIADB_KIND_DIR));
+        ConfiguratorPtr mediaDbKindConfigurator(new MediaDbKindConfigurator(id, configType, scanType, *this, baseDir + MEDIADB_KIND_DIR));
         m_configurators.push_back(mediaDbKindConfigurator);
 
-		ConfiguratorPtr tempDbKindConfigurator(new TempDbKindConfigurator(id, configType, scanType, *this, m_tempDbClient, baseDir + TEMPDB_KIND_DIR));
+		ConfiguratorPtr tempDbKindConfigurator(new TempDbKindConfigurator(id, configType, scanType, *this, baseDir + TEMPDB_KIND_DIR));
 		m_configurators.push_back(tempDbKindConfigurator);
 
 	}
 
 	if (bitmask & DBPERMISSIONS) {
-		ConfiguratorPtr dbPermsConfigurator(new DbPermissionsConfigurator(id, configType, scanType, *this, m_dbClient, baseDir + DB_PERMISSIONS_DIR));
+		ConfiguratorPtr dbPermsConfigurator(new DbPermissionsConfigurator(id, configType, scanType, *this, baseDir + DB_PERMISSIONS_DIR));
 		m_configurators.push_back(dbPermsConfigurator);
 
-        ConfiguratorPtr mediaDbPermsConfigurator(new MediaDbPermissionsConfigurator(id, configType, scanType, *this, m_mediaDbClient, baseDir + MEDIADB_PERMISSIONS_DIR));
+        ConfiguratorPtr mediaDbPermsConfigurator(new MediaDbPermissionsConfigurator(id, configType, scanType, *this, baseDir + MEDIADB_PERMISSIONS_DIR));
         m_configurators.push_back(mediaDbPermsConfigurator);
 
-		ConfiguratorPtr tempDbPermsConfigurator(new TempDbPermissionsConfigurator(id, configType, scanType, *this, m_tempDbClient, baseDir + TEMPDB_PERMISSIONS_DIR));
+		ConfiguratorPtr tempDbPermsConfigurator(new TempDbPermissionsConfigurator(id, configType, scanType, *this, baseDir + TEMPDB_PERMISSIONS_DIR));
 		m_configurators.push_back(tempDbPermsConfigurator);
 	}
 
@@ -590,7 +547,7 @@ void BusClient::ScanDir(const MojString& _id, Configurator::RunType scanType, co
 	}
 
 	if (bitmask & ACTIVITIES) {
-		ActivityConfigurator *activityConfigurator = new ActivityConfigurator(id, configType, scanType, *this, baseDir + ACTIVITY_CONFIG_DIR);
+		ConfiguratorPtr activityConfigurator(new ActivityConfigurator(id, configType, scanType, *this, baseDir + ACTIVITY_CONFIG_DIR));
 		m_configurators.push_back(activityConfigurator);
 	}
 }
@@ -641,18 +598,18 @@ gboolean BusClient::IterateConfiguratorsCallback(gpointer data)
 		if (!client->m_shuttingDown) {
 			LOG_DEBUG("No more configurators left (%zu configurations completed, %zu configurations failed), shutting down.", Configurator::ConfigureOk().size(), Configurator::ConfigureFailure().size());
 			client->ScheduleShutdown();
-			return client->m_msg.get() != NULL;
+			return client->m_msg.get() != nullptr;
 		}
 		return false;
 	}
 
 	gboolean configurationsRemaining = FALSE;
 	// iterate through 1 file in each configurator
-	for (int i = 0, ni = client->m_configurators.size(); i < ni; i++) {
+	for (size_t i = 0, ni = client->m_configurators.size(); i < ni; ++i) {
 		bool exceptionThrown = true;
 		try {
 				ConfiguratorPtr configurator = client->m_configurators[i];
-				if (configurator.get() == NULL)
+				if (configurator.get() == nullptr)
 					continue;
 
 				if (!configurator->Run())
@@ -678,35 +635,30 @@ gboolean BusClient::IterateConfiguratorsCallback(gpointer data)
 
 void BusClient::ConfiguratorComplete(ConfiguratorCollection::iterator configurator)
 {
-    LOG_TRACE("Entering function %s", __FUNCTION__);
+	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-    ConfiguratorPtr ptr(*configurator);
-    if( ptr.get() ) 
-        LOG_DEBUG("... configurator %s complete (%p), %zd left.", ptr->ConfiguratorName(), configurator->get(), m_configurators.size() - 1);
+	if (Configurator* done = configurator->get())
+		LOG_DEBUG("... configurator %s complete (%p), %zu left.", done->ConfiguratorName(), static_cast<void*>(done), m_configurators.size() - 1);
 
-     configurator->reset();
-     m_configuratorsCompleted++;
-     RunNextConfigurator();
+	configurator->reset();
+	m_configuratorsCompleted++;
+	RunNextConfigurator();
 }
 
 void BusClient::ConfiguratorComplete(Configurator* configurator)
 {
-	ConfiguratorCollection::iterator i, ni;
-	for (i = m_configurators.begin(), ni = m_configurators.end(); i != ni; i++) {
-		ConfiguratorPtr ptr(*i);
-		if (ptr.get() && &(*ptr) == configurator) {
+	for (auto i = m_configurators.begin(); i != m_configurators.end(); ++i) {
+		if (i->get() == configurator) {
 			ConfiguratorComplete(i);
 			return;
 		}
 	}
 }
 
-void BusClient::ConfiguratorComplete(int configuratorIndex)
+void BusClient::ConfiguratorComplete(size_t configuratorIndex)
 {
-    if( configuratorIndex < m_configurators.size() ) {
-        ConfiguratorCollection::iterator i = m_configurators.begin() + configuratorIndex;
-        ConfiguratorComplete(i);
-    }
+	if (configuratorIndex < m_configurators.size())
+		ConfiguratorComplete(m_configurators.begin() + static_cast<std::ptrdiff_t>(configuratorIndex));
 }
 
 void BusClient::ScheduleShutdown()
@@ -719,7 +671,7 @@ void BusClient::ScheduleShutdown()
 
 		if (m_wrongAplication) {
 			MojString response;
-			response.appendFormat("Application or service doesn't exist");
+			(void)response.appendFormat("Application or service doesn't exist");
 			m_wrongAplication = false;
             if(m_msg->replyError(MojErrInternal, response.data()) != MojErrNone) {
                 LOG_WARNING(MSGID_SHUTDOWN_ERROR, 1, PMLOGKS("Response", response.data()), "Application or service doesn't exist");
@@ -732,7 +684,7 @@ void BusClient::ScheduleShutdown()
             }
 		} else {
 			MojObject response;
-			response.putInt("configured", ok.size());
+			(void)response.putInt("configured", static_cast<MojInt64>(ok.size()));
             if(m_msg->replySuccess(response) != MojErrNone) {
                 LOG_WARNING(MSGID_SHUTDOWN_ERROR, 0, "Configured");
             }
@@ -767,10 +719,9 @@ void BusClient::ScheduleShutdown()
 		    500, /* timeout in ms */
 		    &BusClient::ShutdownCallback, // callback
 		    this, /* callback data */
-		    NULL /*destroy notify callback*/
+		    nullptr /*destroy notify callback*/
 		);
 	}
-	//g_idle_add(&BusClient::ShutdownCallback, this);
 
 	m_shuttingDown = true;
 }

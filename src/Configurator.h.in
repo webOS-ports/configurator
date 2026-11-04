@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,24 +21,23 @@
 #include "core/MojServiceRequest.h"
 #include "core/MojSignal.h"
 #include "CoreDefs.h"
-#include <tr1/unordered_map>
+
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+inline constexpr MojModeT kCacheDirPerms = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
+inline constexpr MojModeT kCacheStampPerm = S_IRWXU | S_IRGRP | S_IROTH;
+
+inline constexpr const char* kCacheDir = "@WEBOS_INSTALL_LOCALSTATEDIR@/cache/";
+inline constexpr const char* kConfCacheDir = "@WEBOS_INSTALL_LOCALSTATEDIR@/cache/configurator/";
+
 class ConfiguratorCallback;
-
-static const MojModeT kCacheDirPerms = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
-static const MojModeT kCacheStampPerm = S_IRWXU | S_IRGRP | S_IROTH;
-
-static const char* kCacheDir = "@WEBOS_INSTALL_LOCALSTATEDIR@/cache/";
-static const char* kConfCacheDir = "@WEBOS_INSTALL_LOCALSTATEDIR@/cache/configurator/";
 
 class Configurator : public MojSignalHandler
 {
 public:
-	typedef MojSignal<const std::string &, MojObject&, MojErr>::Slot<Configurator> ConfiguredResponse;
-	typedef MojServiceRequest::ReplySignal::Slot<Configurator> GenericResponse;
-	typedef std::vector<std::string> ConfigCollection;
+	using ConfigCollection = std::vector<std::string>;
 
 	enum RunType {
 		Configure,
@@ -52,7 +52,7 @@ public:
 	};
 
 	Configurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory);
-	virtual ~Configurator();
+	~Configurator() override;
 
 	static void ResetConfigStats();
 	static const ConfigCollection& ConfigureOk();
@@ -63,16 +63,16 @@ public:
 	virtual const char* ServiceName() const = 0;
 
 protected:
-	virtual ConfiguratorCallback* CreateCallback(const std::string &filePath);
+	virtual ConfiguratorCallback* CreateCallback(const std::string& filePath);
 
 	virtual MojErr ProcessConfig(const std::string& filePath, const std::string& json);
 	virtual MojErr ProcessConfigRemoval(const std::string& filePath, const std::string& json);
 
-	virtual	MojErr ProcessConfig(const std::string& filePath, MojObject& json) = 0;
-	virtual MojErr ProcessConfigRemoval(const std::string &filePath, MojObject& json) = 0;
+	virtual MojErr ProcessConfig(const std::string& filePath, MojObject& json) = 0;
+	virtual MojErr ProcessConfigRemoval(const std::string& filePath, MojObject& json) = 0;
 
-	void              MarkConfigured(const std::string& confFile) const;
-	void              UnmarkConfigured(const std::string& confFile) const;
+	void MarkConfigured(const std::string& confFile) const;
+	void UnmarkConfigured(const std::string& confFile) const;
 	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
 
 	const std::string& ParentId(const std::string& filePath) const;
@@ -82,28 +82,26 @@ protected:
 	const ConfigType m_confType;
 
 private:
-	typedef std::tr1::unordered_map<std::string, std::string> ConfigMap;
-	void              InitCacheDir() const;
-	bool              IsAlreadyConfigured(const std::string &confFile) const;
-	bool              GetConfigFiles(const std::string& parent, const std::string& directory);
-	const std::string ReadFile(const std::string& filePath) const;
-	bool              WriteStampChecksum(int stampFd, const std::string& confFile) const;
-	void              Complete();
-	MojErr            BusResponseAsync(const std::string& filePath, MojObject& response, MojErr err, bool *cacheConfigured);
+	// Key: /full/path/to/config/file. Value: the directory it was found in under the
+	// configurator's directory, which names the app or service it belongs to.
+	using ConfigMap = std::unordered_map<std::string, std::string>;
 
-	/**
-	 * Key = /full/path/to/config/file
-	 * Value = "config" (the parent directory containing the config file)
-	 */
+	void InitCacheDir() const;
+	bool IsAlreadyConfigured(const std::string& confFile) const;
+	bool GetConfigFiles(const std::string& parent, const std::string& directory);
+	std::string ReadFile(const std::string& filePath) const;
+	bool WriteStampChecksum(int stampFd, const std::string& confFile) const;
+	void Complete();
+	MojErr BusResponseAsync(const std::string& filePath, MojObject& response, MojErr err, bool* cacheConfigured);
+
 	ConfigMap m_parentDirMap;
-
 	ConfigCollection m_configs;
 	ConfigCollection m_pendingConfigs;
 	const RunType m_currentType;
-	bool m_completed;
+	bool m_completed = false;
 	const std::string m_configDir;
-	bool m_emptyConfigurator;
-	bool m_scanned;
+	bool m_emptyConfigurator = false;
+	bool m_scanned = false;
 
 	static ConfigCollection m_configureOk;
 	static ConfigCollection m_configureFailed;
@@ -114,10 +112,10 @@ private:
 class ConfiguratorCallback : public MojSignalHandler
 {
 public:
-	typedef MojServiceRequest::ReplySignal::Slot<ConfiguratorCallback> GenericResponse;
+	using GenericResponse = MojServiceRequest::ReplySignal::Slot<ConfiguratorCallback>;
 
 	ConfiguratorCallback(Configurator* configurator, const std::string& filePath);
-	virtual ~ConfiguratorCallback();
+	~ConfiguratorCallback() override;
 
 	GenericResponse m_slot;
 
@@ -125,45 +123,42 @@ protected:
 	// configuration-specific handler
 	virtual MojErr Response(MojObject& response, MojErr err) = 0;
 
-	// this is called at most once - either call within response or called
-	// by ResponseWrapper if Response return MojErrNone
+	// Called at most once: either from within Response, or by ResponseWrapper once
+	// Response has returned MojErrNone.
 	MojErr DelegateResponse(MojObject& response, MojErr err);
 
-	// useful if you want to mark this config file as processed even
-	// though it returned an error (e.g. if the service responds with a specific
-	// error if it was already present i.e. activitymanager & filecache)
-	// this maintains default behaviour if there was no error.
+	// Marks the config file as processed even though the service returned an error, for
+	// a service that answers with a specific error when the thing is already there
+	// (activitymanager, filecache). Without an error the default behaviour is kept.
 	void MarkConfigured();
 
-	// useful if you want to specifically mark a config file as unconfigured
-	// this maintains default behaviour if there was no error
+	// Marks the config file as not configured. Without an error the default behaviour is
+	// kept.
 	void UnmarkConfigured();
 
-	// the path to the configuration that generated this configurator request
+	// the configuration that made this request
 	const std::string m_config;
 
 private:
-	typedef MojRefCountedPtr<Configurator> ConfiguratorPtr;
+	using ConfiguratorPtr = MojRefCountedPtr<Configurator>;
 
 	ConfiguratorPtr m_handler;
-	bool m_delegateInvoked;
+	bool m_delegateInvoked = false;
+	bool m_defaultCacheBehaviourUsed = false;
+	// at most one of these is set
+	bool m_unconfigure = false;
+	bool m_configure = false;
 
-	bool m_defaultCacheBehaviourUsed;
-	// only one of these 2 should be set if any
-	bool m_unconfigure;
-	bool m_configure;
-
-	MojErr ResponseWrapper(MojObject &response, MojErr err);
+	MojErr ResponseWrapper(MojObject& response, MojErr err);
 };
 
 class DefaultConfiguratorCallback : public ConfiguratorCallback
 {
 public:
-	DefaultConfiguratorCallback(Configurator *configurator, const std::string& filePath);
-	~DefaultConfiguratorCallback();
+	using ConfiguratorCallback::ConfiguratorCallback;
 
 protected:
-	MojErr Response(MojObject &response, MojErr err);
+	MojErr Response(MojObject& response, MojErr err) override;
 };
 
 #endif /* CONFIGURATOR_H_ */

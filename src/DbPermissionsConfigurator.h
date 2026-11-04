@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2018 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,44 +18,41 @@
 #ifndef DBPERMISSIONSCONFIGURATOR_H_
 #define DBPERMISSIONSCONFIGURATOR_H_
 
-#include "db/MojDbClient.h"
 #include "Configurator.h"
 
+// Hands the db8 permissions in a directory to com.palm.db (putPermissions).
 class DbPermissionsConfigurator : public Configurator
 {
 public:
-	DbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
-	virtual ~DbPermissionsConfigurator();
+	DbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory);
 
 protected:
-	virtual MojErr ProcessConfig(const std::string& filePath, MojObject& permission);
-	virtual MojErr ProcessConfigRemoval(const std::string &filePath, MojObject &json);
+	MojErr ProcessConfig(const std::string& filePath, MojObject& permission) override;
+	MojErr ProcessConfigRemoval(const std::string& filePath, MojObject& json) override;
 
-	virtual const char* ConfiguratorName() const;
-	virtual const char* ServiceName() const;
-
-private:
-	MojDbClient& m_dbClient;
+	const char* ConfiguratorName() const override;
+	const char* ServiceName() const override;
 };
 
+// The same for com.webos.mediadb.
 class MediaDbPermissionsConfigurator : public DbPermissionsConfigurator
 {
 public:
-    MediaDbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
+	using DbPermissionsConfigurator::DbPermissionsConfigurator;
 
 protected:
-    virtual const char* ServiceName() const;
+	const char* ServiceName() const override;
 };
 
+// The same for com.palm.tempdb. Never stamped, so configured on every run.
 class TempDbPermissionsConfigurator : public DbPermissionsConfigurator
 {
 public:
-	TempDbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
+	using DbPermissionsConfigurator::DbPermissionsConfigurator;
 
 protected:
-	virtual const char* ServiceName() const;
-
-	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
+	const char* ServiceName() const override;
+	bool CanCacheConfiguratorStatus(const std::string& confFile) const override;
 };
 
 #endif /* DBPERMISSIONSCONFIGURATOR_H_ */

@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2018 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +19,5 @@
 #define COREDEFS_H_
 
 class BusClient;
-class DbKindConfigurator;
-class FileCacheConfigurator;
-class WatchConfigurator;
 
 #endif /* COREDEFS_H_ */

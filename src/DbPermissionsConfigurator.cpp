@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,96 +19,68 @@
 #include "DbPermissionsConfigurator.h"
 #include "BusClient.h"
 
-using namespace std;
+namespace {
 
-static const char *MOJODB_DB_BUS_ADDRESS = "com.palm.db";
-static const char *MOJODB_TEMPDB_BUS_ADDRESS = "com.palm.tempdb";
-static const char *MOJODB_MEDIADB_BUS_ADDRESS = "com.webos.mediadb";
-static const char *MOJODB_PUTPERMISSIONS_METHOD = "putPermissions";
+constexpr const char* MOJODB_DB_BUS_ADDRESS = "com.palm.db";
+constexpr const char* MOJODB_TEMPDB_BUS_ADDRESS = "com.palm.tempdb";
+constexpr const char* MOJODB_MEDIADB_BUS_ADDRESS = "com.webos.mediadb";
+constexpr const char* MOJODB_PUTPERMISSIONS_METHOD = "putPermissions";
+
+} // namespace
 
 const char* DbPermissionsConfigurator::ConfiguratorName() const
 {
-	 return "DbPermissionsConfigurator";
+	return "DbPermissionsConfigurator";
 }
 
 const char* DbPermissionsConfigurator::ServiceName() const
 {
-	 return MOJODB_DB_BUS_ADDRESS;
+	return MOJODB_DB_BUS_ADDRESS;
 }
 
-DbPermissionsConfigurator::DbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, string configDirectory)
-: Configurator(id, confType, type, busClient, configDirectory),
-  m_dbClient(dbClient)
+DbPermissionsConfigurator::DbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory)
+	: Configurator(id, confType, type, busClient, configDirectory)
 {
-
 }
 
-DbPermissionsConfigurator::~DbPermissionsConfigurator()
-{
-
-}
-
-MojErr DbPermissionsConfigurator::ProcessConfig(const string& filePath, MojObject& permissions)
+MojErr DbPermissionsConfigurator::ProcessConfig(const std::string& filePath, MojObject& permissions)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	std::string owner;
 	MojObject perms;
+	MojErr err = perms.put("permissions", permissions);
+	MojErrCheck(err);
 
-	owner = ParentId(filePath);
-    MojErr err = perms.put("permissions", permissions);
-    MojErrCheck(err);
-
-	// for third-party packages, we set the appid on the service request
-	// so that mojodb does things correctly.  root config files aren't split up
-	// in a per-service/app directory way (though they should be like activitymanager)
-	MojRefCountedPtr<MojServiceRequest> request;
-	if (!owner.empty())
-		request = m_busClient.CreateRequest(owner.c_str());
-	else
-		request = m_busClient.CreateRequest();
+	// For an app's or service's own files the request carries its id, so that db8 applies
+	// them as its. The root config files are not split up per service or app.
+	const std::string& owner = ParentId(filePath);
+	MojRefCountedPtr<MojServiceRequest> request = owner.empty()
+			? m_busClient.CreateRequest()
+			: m_busClient.CreateRequest(owner.c_str());
 	return request->send(CreateCallback(filePath)->m_slot, ServiceName(), MOJODB_PUTPERMISSIONS_METHOD, perms);
 }
 
-MojErr DbPermissionsConfigurator::ProcessConfigRemoval(const string& filePath, MojObject& params)
+MojErr DbPermissionsConfigurator::ProcessConfigRemoval(const std::string& filePath, MojObject&)
 {
 	LOG_TRACE("Entering function %s", __FUNCTION__);
 
-	// This is the fix for NOV-129951.
-	// This operation is a mojodb no-op since the permissions are removed when the associated
-	// kind gets deleted in mojodb.  (Previously the code spit out a warning here and
-	// returned an error to the caller).
+	// Nothing to ask db8 for: permissions go when their kind is deleted (NOV-129951).
 	UnmarkConfigured(filePath);
 
 	return MojErrInProgress;
 }
 
-////////////////////////////////////////////////
-// mediaDB
-MediaDbPermissionsConfigurator::MediaDbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, string configDirectory)
-    : DbPermissionsConfigurator(id, confType, type, busClient, dbClient, std::move(configDirectory))
-{
-}
-
 const char* MediaDbPermissionsConfigurator::ServiceName() const
 {
-     return MOJODB_MEDIADB_BUS_ADDRESS;
-}
-
-
-////////////////////////////////////////////////
-// tempDB
-TempDbPermissionsConfigurator::TempDbPermissionsConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, string configDirectory)
-	: DbPermissionsConfigurator(id, confType, type, busClient, dbClient, std::move(configDirectory))
-{
+	return MOJODB_MEDIADB_BUS_ADDRESS;
 }
 
 const char* TempDbPermissionsConfigurator::ServiceName() const
 {
-	 return MOJODB_TEMPDB_BUS_ADDRESS;
+	return MOJODB_TEMPDB_BUS_ADDRESS;
 }
 
-bool TempDbPermissionsConfigurator::CanCacheConfiguratorStatus(const std::string& confFile) const
+bool TempDbPermissionsConfigurator::CanCacheConfiguratorStatus(const std::string&) const
 {
 	return false;
 }

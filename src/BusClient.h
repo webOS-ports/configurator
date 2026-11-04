@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,65 +25,65 @@
 
 #include "core/MojReactorApp.h"
 #include "core/MojGmainReactor.h"
-#include "db/MojDbServiceClient.h"
 #include "luna/MojLunaService.h"
 #include "Configurator.h"
 #include "Flags.h"
 #include "Log.h"
+
+#include <cassert>
+#include <string>
 #include <vector>
 
 class BusClient : public MojReactorApp<MojGmainReactor>
 {
 public:
-	enum ScanType {
-		DBKINDS      = 1 << 0,
-		FILECACHE    = 1 << 1,
+	enum ScanType : unsigned {
+		DBKINDS       = 1 << 0,
+		FILECACHE     = 1 << 1,
 		DBPERMISSIONS = 1 << 2,
-		/*WATCHES      = 1 << 2,*/ // deprecated
-		ACTIVITIES   = 1 << 3,
+		ACTIVITIES    = 1 << 3,
 	};
 	DECLARE_FLAGS(ScanTypes, ScanType);
 
-	typedef enum {
-		None                 = 0,
-		DeprecatedDbKind,
-	} AdditionalFileType;
+	enum AdditionalFileType : unsigned {
+		None             = 0,
+		DeprecatedDbKind = 1 << 0,
+	};
 	DECLARE_FLAGS(AdditionalFileTypes, AdditionalFileType);
 
 	BusClient();
-	virtual ~BusClient();
+	~BusClient() override;
 
-	MojDbClient&						GetDbClient();
-	MojRefCountedPtr<MojServiceRequest>	CreateRequest();
-	MojRefCountedPtr<MojServiceRequest>	CreateRequest(const char *forgedAppId);
-	virtual MojErr						open();
-	virtual MojErr						handleArgs(const StringVec& args);
-	void								ConfiguratorComplete(Configurator *configurator);
-	void								ConfiguratorComplete(int configuratorIndex);
+	MojRefCountedPtr<MojServiceRequest> CreateRequest();
+	MojRefCountedPtr<MojServiceRequest> CreateRequest(const char* forgedAppId);
+	MojErr open() override;
+	MojErr handleArgs(const StringVec& args) override;
+	void ConfiguratorComplete(Configurator* configurator);
+	void ConfiguratorComplete(size_t configuratorIndex);
 
 private:
-	typedef enum {
+	enum PackageType {
 		Application,
 		Service,
-	} PackageType;
+	};
 
-	typedef enum {
+	enum PackageLocation {
 		System,
 		ThirdParty,
-	} PackageLocation;
+	};
 
-	typedef enum {
-		ForceRescan, /// force all the configurators to run
-		LazyScan, /// only run those configurators that haven't run yet
-	} ConfigurationMode;
+	enum ConfigurationMode {
+		ForceRescan, ///< run every configuration again
+		LazyScan,    ///< only run the configurations that have not run yet
+	};
 
 	class BusMethods : public MojService::CategoryHandler
 	{
 	public:
-		BusMethods(BusClient& client);
+		explicit BusMethods(BusClient& client);
 
 	private:
-		bool WorkEnqueued(Callback callback, MojServiceMessage *msg, MojObject& payload);
+		bool WorkEnqueued(Callback callback, MojServiceMessage* msg, MojObject& payload);
 
 		MojErr Run(MojServiceMessage* msg, MojObject& payload);
 		MojErr Rescan(MojServiceMessage* msg, MojObject& payload);
@@ -94,55 +95,51 @@ private:
 	};
 
 	struct PendingWork {
-		BusMethods *instance;
+		BusMethods* instance;
 		MojService::CategoryHandler::Callback callback;
 		MojRefCountedPtr<MojServiceMessage> msg;
 		MojObject payload;
 	};
 
-	typedef std::vector<PendingWork> PendingWorkCollection;
+	using Base = MojReactorApp<MojGmainReactor>;
+	using ConfiguratorPtr = MojRefCountedPtr<Configurator>;
+	using ConfiguratorCollection = std::vector<ConfiguratorPtr>;
+	using PendingWorkCollection = std::vector<PendingWork>;
 
-	static const char* const SERVICE_NAME;
-	static const char* const ROOT_BASE_DIR;
-	static const char* const OLD_DB_KIND_DIR; //deprecated
-	static const char* const DB_KIND_DIR;
-	static const char* const DB_PERMISSIONS_DIR;
-    static const char* const MEDIADB_KIND_DIR;
-    static const char* const MEDIADB_PERMISSIONS_DIR;
-	static const char* const TEMPDB_KIND_DIR;
-	static const char* const TEMPDB_PERMISSIONS_DIR;
-	static const char* const FILE_CACHE_CONFIG_DIR;
-	static const char* const ACTIVITY_CONFIG_DIR;
-	static const char* const FIRST_BOOT_FILE;
-	static const char* const BASE_CRYPTOFS;
-	static const char* const BASE_ROOT;
-	static const char* const BASE_PALM_OFFSET;
-	static const char* const APPS_DIR;
-	static const char* const SERVICES_DIR;
-	static const char* const CONF_SUBDIR;
-
-	typedef MojReactorApp<MojGmainReactor> Base;
-	typedef MojRefCountedPtr<Configurator> ConfiguratorPtr;
-	typedef std::vector<ConfiguratorPtr> ConfiguratorCollection;
+	static constexpr const char* SERVICE_NAME            = "com.palm.configurator";
+	static constexpr const char* ROOT_BASE_DIR           = "/etc/palm/";
+	static constexpr const char* OLD_DB_KIND_DIR         = "db_kinds"; // deprecated
+	static constexpr const char* DB_KIND_DIR             = "db/kinds";
+	static constexpr const char* DB_PERMISSIONS_DIR      = "db/permissions";
+	static constexpr const char* MEDIADB_KIND_DIR        = "mediadb/kinds";
+	static constexpr const char* MEDIADB_PERMISSIONS_DIR = "mediadb/permissions";
+	static constexpr const char* TEMPDB_KIND_DIR         = "tempdb/kinds";
+	static constexpr const char* TEMPDB_PERMISSIONS_DIR  = "tempdb/permissions";
+	static constexpr const char* FILE_CACHE_CONFIG_DIR   = "filecache_types";
+	static constexpr const char* ACTIVITY_CONFIG_DIR     = "activities";
+	static constexpr const char* BASE_CRYPTOFS           = "/media/cryptofs/apps/";
+	static constexpr const char* BASE_PALM_OFFSET        = "usr/palm/";
+	static constexpr const char* APPS_DIR                = "applications/";
+	static constexpr const char* SERVICES_DIR            = "services/";
+	static constexpr const char* CONF_SUBDIR             = "/configuration/";
 
 	std::string appConfDir(const MojString& appId, PackageType type, PackageLocation location);
 
 	static Configurator::ConfigType PackageTypeToConfigType(PackageType type)
 	{
-		switch(type) {
+		switch (type) {
 		case Application:
 			return Configurator::ConfigApplication;
 		case Service:
 			return Configurator::ConfigService;
-		default:
-			assert(false);
-			return Configurator::ConfigUnknown;
 		}
+		assert(false);
+		return Configurator::ConfigUnknown;
 	}
 
 	void Run(ScanTypes bitmask);
 	void Scan(ConfigurationMode confmode, const MojString& appid, PackageType type, PackageLocation location);
-	void ScanDir(const MojString& id, Configurator::RunType scanType, const std::string &dirBase, ScanTypes bitmask, Configurator::ConfigType configType, AdditionalFileTypes types = None);
+	void ScanDir(const MojString& id, Configurator::RunType scanType, const std::string& dirBase, ScanTypes bitmask, Configurator::ConfigType configType, AdditionalFileTypes types = None);
 	void Unconfigure(const MojString& appId, PackageType type, PackageLocation location, ScanTypes bitmask);
 
 	void RunNextConfigurator();
@@ -153,19 +150,16 @@ private:
 
 	void ConfiguratorComplete(ConfiguratorCollection::iterator configurator);
 
-	MojLunaService				 m_service;
-	MojDbServiceClient			 m_dbClient;
-	MojDbServiceClient			 m_mediaDbClient;
-    MojDbServiceClient           m_tempDbClient;
-	ConfiguratorCollection       m_configurators;
-	size_t                       m_configuratorsCompleted;
+	MojLunaService m_service;
+	ConfiguratorCollection m_configurators;
+	size_t m_configuratorsCompleted = 0;
 	MojRefCountedPtr<BusMethods> m_methods;
-	bool						 m_launchedAsService;
+	bool m_launchedAsService = false;
 	MojRefCountedPtr<MojServiceMessage> m_msg;
-	bool m_shuttingDown;
-	bool m_wrongAplication;
+	bool m_shuttingDown = false;
+	bool m_wrongAplication = false;
 	PendingWorkCollection m_pending;
-	unsigned int m_timerTimeout;
+	guint m_timerTimeout = 0;
 };
 
 DECLARE_OPERATORS_FOR_FLAGS(BusClient::ScanTypes)

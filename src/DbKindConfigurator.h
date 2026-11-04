@@ -1,4 +1,5 @@
 // Copyright (c) 2009-2024 LG Electronics, Inc.
+// Copyright (c) 2026 Herman van Hazendonk <github.com@herrie.org>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,45 +18,42 @@
 #ifndef DBKINDCONFIGURATOR_H_
 #define DBKINDCONFIGURATOR_H_
 
-#include "db/MojDbClient.h"
 #include "Configurator.h"
 
+// Registers the db8 kinds in a directory with com.palm.db (putKind / delKind).
 class DbKindConfigurator : public Configurator
 {
 public:
-	DbKindConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
-	virtual ~DbKindConfigurator();
+	DbKindConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, const std::string& configDirectory);
 
 protected:
-	virtual MojErr ProcessConfig(const std::string& filePath, MojObject& kind);
-	virtual MojErr ProcessConfigRemoval(const std::string &filePath, MojObject &json);
+	MojErr ProcessConfig(const std::string& filePath, MojObject& kind) override;
+	MojErr ProcessConfigRemoval(const std::string& filePath, MojObject& json) override;
 
-	virtual const char* ConfiguratorName() const;
-	virtual const char* ServiceName() const;
-	MojErr CheckOwner(const std::string& filePath, MojObject &params, std::string &ownerid) const;
-
-private:
-	MojDbClient& m_dbClient;
+	const char* ConfiguratorName() const override;
+	const char* ServiceName() const override;
+	MojErr CheckOwner(const std::string& filePath, MojObject& params, std::string& ownerid) const;
 };
 
+// The same for com.webos.mediadb.
 class MediaDbKindConfigurator : public DbKindConfigurator
 {
 public:
-    MediaDbKindConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
+	using DbKindConfigurator::DbKindConfigurator;
 
 protected:
-    virtual const char* ServiceName() const;
+	const char* ServiceName() const override;
 };
 
+// The same for com.palm.tempdb. Never stamped, so configured on every run.
 class TempDbKindConfigurator : public DbKindConfigurator
 {
 public:
-	TempDbKindConfigurator(const std::string& id, ConfigType confType, RunType type, BusClient& busClient, MojDbClient& dbClient, std::string configDirectory);
+	using DbKindConfigurator::DbKindConfigurator;
 
 protected:
-	virtual const char* ServiceName() const;
-
-	virtual bool CanCacheConfiguratorStatus(const std::string& confFile) const;
+	const char* ServiceName() const override;
+	bool CanCacheConfiguratorStatus(const std::string& confFile) const override;
 };
 
 #endif /* DBKINDCONFIGURATOR_H_ */
