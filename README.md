@@ -13,11 +13,13 @@ Dependencies
 ============
 Below are the tools and libraries required to build.
 
-	- cmake 2.8.7 
+	- cmake 3.10, and a C++23 compiler
 	- glib-2.0
 	- webosose/Db8 libraries (libmojocore, libmojoluna)
 	- webosose/luna-service2 3.0.0
 	- webosose/cmake-modules-webos
+	- PmLogLib 3 (unless -DUSE_PMLOG=OFF)
+	- googletest, for the tests only
 
 How to Build on Linux
 =====================
@@ -53,6 +55,13 @@ the <tt>PKG_CONFIG_PATH</tt> environment variable.
 To see all of the make targets that CMake has generated, issue:
 
     $ make help
+
+## Tests
+
+`-DBUILD_TESTING=ON` builds the unit tests (`configurator-tests`). The tests
+and the hardening scripts (sanitizers, static analysis, the warning gate on
+every architecture, mutation checks) are described in
+[tests/README.md](tests/README.md).
 
 
 # Copyright and License Information

@@ -94,6 +94,8 @@ private:
 		MojErr Unconfigure(MojServiceMessage* msg, const MojObject& payload);
 
 		BusClient& m_client;
+
+		friend struct ConfiguratorTestAccess;
 	};
 
 	struct PendingWork {
@@ -173,6 +175,9 @@ private:
 	bool m_wrongAplication = false;
 	PendingWorkCollection m_pending;
 	guint m_timerTimeout = 0;
+
+	// tests/unit reaches the private parts through this
+	friend struct ConfiguratorTestAccess;
 };
 
 DECLARE_OPERATORS_FOR_FLAGS(BusClient::ScanTypes)

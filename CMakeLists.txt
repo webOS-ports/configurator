@@ -56,15 +56,17 @@ endif()
 
 find_library(PTHREAD pthread REQUIRED)
 
-# Everything but main(), so tests/ can link the same objects.
-add_library(configurator-core OBJECT
-    src/ActivityConfigurator.cpp
-    src/BusClient.cpp
-    src/Configurator.cpp
-    src/DbKindConfigurator.cpp
-    src/DbPermissionsConfigurator.cpp
-    src/FileCacheConfigurator.cpp
-    src/Log.cpp)
+# Everything but main(). tests/ builds the same sources into its own copy,
+# against a Configurator.h whose stamp cache is a scratch directory.
+set(CONFIGURATOR_CORE_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/ActivityConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/BusClient.cpp
+    ${PROJECT_SOURCE_DIR}/src/Configurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/DbKindConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/DbPermissionsConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/FileCacheConfigurator.cpp
+    ${PROJECT_SOURCE_DIR}/src/Log.cpp)
+add_library(configurator-core OBJECT ${CONFIGURATOR_CORE_SOURCES})
 
 add_executable(configurator $<TARGET_OBJECTS:configurator-core> src/main.cpp)
 
@@ -79,3 +81,10 @@ target_link_libraries(configurator
 webos_configure_header_files(src)
 webos_build_daemon(NAME configurator LAUNCH files/launch)
 webos_build_system_bus_files()
+
+# Unit tests, off unless asked for. See tests/README.md.
+option(BUILD_TESTING "Build the unit tests in tests/" OFF)
+if (BUILD_TESTING)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

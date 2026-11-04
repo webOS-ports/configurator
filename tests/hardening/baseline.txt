@@ -1,0 +1,30 @@
+# Static-analysis findings that were looked at and are not fixed, with why.
+# static-analysis.sh fails on anything not listed here; line numbers are
+# ignored when matching, so an entry survives code moving around it.
+# Format: <tool>: <file>:<line>: <message>   # <reason>
+
+gcc-fanalyzer-O0: src/ActivityConfigurator.cpp:156:1: warning: leak of 'activity.MojObject::m_implementation' [CWE-401] [-Wanalyzer-malloc-leak]   # MojObject's destructor calls release(), which is out of line in libmojocore; the analyzer does not see it free m_implementation
+gcc-fanalyzer-O0: src/ActivityConfigurator.cpp:156:1: warning: leak of 'creatorObj.MojObject::m_implementation' [CWE-401] [-Wanalyzer-malloc-leak]   # MojObject's destructor calls release(), which is out of line in libmojocore; the analyzer does not see it free m_implementation
+gcc-fanalyzer-O0: src/ActivityConfigurator.cpp:184:1: warning: leak of 'activity.MojObject::m_implementation' [CWE-401] [-Wanalyzer-malloc-leak]   # MojObject's destructor calls release(), which is out of line in libmojocore; the analyzer does not see it free m_implementation
+gcc-fanalyzer-O0: src/DbPermissionsConfigurator.cpp:61:1: warning: leak of 'perms.MojObject::m_implementation' [CWE-401] [-Wanalyzer-malloc-leak]   # MojObject's destructor calls release(), which is out of line in libmojocore; the analyzer does not see it free m_implementation
+gcc-fanalyzer-O2: src/BusClient.cpp:466:27: warning: use of uninitialized value '<unknown>' [CWE-457] [-Wanalyzer-use-of-uninitialized-value]   # std::string operator+ (confPath + CONF_SUBDIR) inlined at -O2: libstdc++'s SSO buffer, not our value; -O0 and clang do not report it
+gcc-fanalyzer-O2: src/Configurator.cpp:40:32: warning: use of uninitialized value '<unknown>' [CWE-457] [-Wanalyzer-use-of-uninitialized-value]   # std::string operator+ (kConfCacheDir + name) inlined at -O2: libstdc++'s SSO buffer, not our value; -O0 and clang do not report it
+clang-tidy: src/Configurator.cpp:225: warning: function is not thread safe [concurrency-mt-unsafe]   # strerror(); the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:226: warning: function is not thread safe [concurrency-mt-unsafe]   # strerror(); the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:235: warning: function is not thread safe [concurrency-mt-unsafe]   # strerror(); the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:236: warning: function is not thread safe [concurrency-mt-unsafe]   # strerror(); the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:252: warning: function is not thread safe [concurrency-mt-unsafe]   # strerror(); the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:253: warning: function is not thread safe [concurrency-mt-unsafe]   # strerror(); the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:381: warning: function 'GetConfigFiles' is within a recursive call chain [misc-no-recursion]   # GetConfigFiles() recurses into subdirectories by design; each directory is visited once (VisitedDirs) and the depth is bounded by PATH_MAX
+clang-tidy: src/Configurator.cpp:405: warning: function is not thread safe [concurrency-mt-unsafe]   # readdir() on a DIR* private to this call; the configurator is single threaded on the glib main loop
+clang-tidy: src/Configurator.cpp:411: warning: string concatenation results in allocation of unnecessary temporary strings; consider using 'operator+=' or 'string::append()' instead [performance-inefficient-string-concatenation]   # directory + "/" + filename: one temporary per directory entry, during a scan that reads each file anyway
+clang-tidy: src/FileCacheConfigurator.cpp:31: warning: enum 'FileCacheFailure' uses a larger base type ('int', size: 4 bytes) than necessary for its value set, consider using 'std::int16_t' (2 bytes) as the base type to reduce its size [performance-enum-size]   # FileCacheFailure is copied from filecache's FileCacheError.h and compared with its errorCode, an int
+clang-tidy: src/FileCacheConfigurator.cpp:31: warning: initial values in enum '(anonymous namespace)::FileCacheConfiguratorResponse::FileCacheFailure' are not consistent, consider explicit initialization of all, none or only the first enumerator [cert-int09-c]   # FileCacheFailure is copied from filecache's FileCacheError.h; its values follow that file
+clang-tidy: src/FileCacheConfigurator.cpp:92: warning: result of a `data()` call may not be null terminated, provide size information to the callee to prevent potential issues [bugprone-suspicious-stringview-data-usage]   # nakOkSuffix is a constexpr string_view of a string literal, so data() is NUL terminated
+clang-tidy: src/FileCacheConfigurator.cpp:93: warning: result of a `data()` call may not be null terminated, provide size information to the callee to prevent potential issues [bugprone-suspicious-stringview-data-usage]   # nakOkSuffix is a constexpr string_view of a string literal, so data() is NUL terminated
+flawfinder: src/BusClient.cpp:392:  [2] (misc) open:   # BusClient::open(), MojReactorApp's method, not open(2)
+flawfinder: src/BusClient.cpp:398:  [2] (misc) open:   # Base::open(), MojReactorApp's method, not open(2)
+flawfinder: src/BusClient.cpp:401:  [2] (misc) open:   # MojLunaService::open(), not open(2)
+flawfinder: src/BusClient.cpp:462:  [4] (race) access:   # access() only sets m_wrongAplication, a hint in the final reply; the directory is then opened with opendir(), which handles its own failure
+flawfinder: src/BusClient.h:59:  [2] (misc) open:   # the declaration of BusClient::open(), not open(2)
+flawfinder: src/Configurator.cpp:231:  [2] (misc) open:   # the stamp: O_NOFOLLOW | O_CLOEXEC, in a cache directory only root writes

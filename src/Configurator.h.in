@@ -118,6 +118,8 @@ private:
 	static ConfigCollection m_configureFailed;
 
 	friend class ConfiguratorCallback;
+	// tests/unit reaches the private parts through this
+	friend struct ConfiguratorTestAccess;
 };
 
 class ConfiguratorCallback : public MojSignalHandler
